@@ -1,1 +1,0 @@
-import './globals.css'; export const metadata={title:'SALORA — Walk-In Decision Intelligence',description:'Know what to accept before saying yes.'}; export default function Layout({children}:{children:React.ReactNode}){return <html lang="en"><body>{children}</body></html>}
