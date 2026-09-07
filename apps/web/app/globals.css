@@ -2847,3 +2847,1426 @@ input:focus-visible {
     scroll-behavior: auto !important;
   }
 }
+
+/* =========================================================
+   SALORA — PREMIUM MOTION SYSTEM
+   10/10 CINEMATIC INTERACTION LAYER
+   ========================================================= */
+
+/* ---------------------------------------------------------
+   MOTION TOKENS
+   --------------------------------------------------------- */
+
+:root {
+  --motion-fast: 180ms;
+  --motion-base: 280ms;
+  --motion-smooth: 420ms;
+  --motion-slow: 720ms;
+  --motion-cinematic: 1100ms;
+
+  --ease-salora: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-soft: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+
+/* =========================================================
+   1. GLOBAL DASHBOARD ENTRANCE
+   ========================================================= */
+
+.salora-command {
+  animation: salora-dashboard-enter 720ms var(--ease-salora) both;
+}
+
+@keyframes salora-dashboard-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+
+/* =========================================================
+   2. SIDEBAR
+   ========================================================= */
+
+.sidebar-v2 {
+  animation: sidebar-enter 650ms var(--ease-salora) both;
+}
+
+@keyframes sidebar-enter {
+  from {
+    opacity: 0;
+    transform: translateX(-18px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.sidebar-v2 nav button {
+  transition:
+    background var(--motion-base) var(--ease-salora),
+    color var(--motion-base) var(--ease-salora),
+    transform var(--motion-base) var(--ease-salora);
+}
+
+.sidebar-v2 nav button:hover {
+  transform: translateX(4px);
+}
+
+.sidebar-v2 nav button.side-active {
+  position: relative;
+}
+
+.sidebar-v2 nav button.side-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 3px;
+  height: 22px;
+  border-radius: 99px;
+  background: var(--gold);
+  transform: translateY(-50%);
+  animation: active-nav-glow 1.8s ease-in-out infinite;
+}
+
+@keyframes active-nav-glow {
+  0%,
+  100% {
+    opacity: 0.65;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+
+/* =========================================================
+   3. HEADER REVEAL
+   ========================================================= */
+
+.dash-header {
+  animation: header-enter 700ms 80ms var(--ease-salora) both;
+}
+
+@keyframes header-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.eyebrow {
+  animation: eyebrow-reveal 800ms 160ms var(--ease-salora) both;
+}
+
+@keyframes eyebrow-reveal {
+  from {
+    opacity: 0;
+    letter-spacing: 0.04em;
+  }
+
+  to {
+    opacity: 1;
+    letter-spacing: inherit;
+  }
+}
+
+
+/* =========================================================
+   4. LIVE PULSE
+   ========================================================= */
+
+.live-pulse,
+.theater-live-dot,
+.engine-status .status-dot {
+  position: relative;
+}
+
+.live-pulse::after,
+.theater-live-dot::after,
+.engine-status .status-dot::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  opacity: 0;
+  animation: live-radar 2.2s ease-out infinite;
+}
+
+@keyframes live-radar {
+  0% {
+    transform: scale(0.55);
+    opacity: 0.7;
+  }
+
+  70% {
+    transform: scale(1.7);
+    opacity: 0;
+  }
+
+  100% {
+    transform: scale(1.7);
+    opacity: 0;
+  }
+}
+
+
+/* =========================================================
+   5. KPI STAGGER
+   ========================================================= */
+
+.premium-kpi {
+  animation: kpi-enter 600ms var(--ease-salora) both;
+}
+
+.premium-kpi:nth-child(1) {
+  animation-delay: 120ms;
+}
+
+.premium-kpi:nth-child(2) {
+  animation-delay: 180ms;
+}
+
+.premium-kpi:nth-child(3) {
+  animation-delay: 240ms;
+}
+
+.premium-kpi:nth-child(4) {
+  animation-delay: 300ms;
+}
+
+@keyframes kpi-enter {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.premium-kpi {
+  transition:
+    transform var(--motion-smooth) var(--ease-salora),
+    box-shadow var(--motion-smooth) var(--ease-salora),
+    border-color var(--motion-smooth) var(--ease-salora);
+}
+
+.premium-kpi:hover {
+  transform: translateY(-5px);
+}
+
+
+/* =========================================================
+   6. PULSE CARDS
+   ========================================================= */
+
+.pulse-card {
+  animation: pulse-card-enter 650ms var(--ease-salora) both;
+}
+
+.pulse-card:nth-child(1) {
+  animation-delay: 180ms;
+}
+
+.pulse-card:nth-child(2) {
+  animation-delay: 240ms;
+}
+
+.pulse-card:nth-child(3) {
+  animation-delay: 300ms;
+}
+
+.pulse-card:nth-child(4) {
+  animation-delay: 360ms;
+}
+
+@keyframes pulse-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.pulse-card {
+  transition:
+    transform var(--motion-smooth) var(--ease-salora),
+    box-shadow var(--motion-smooth) var(--ease-salora);
+}
+
+.pulse-card:hover {
+  transform: translateY(-4px);
+}
+
+.pulse-card-icon {
+  transition:
+    transform var(--motion-smooth) var(--ease-spring),
+    background var(--motion-base) var(--ease-salora);
+}
+
+.pulse-card:hover .pulse-card-icon {
+  transform: scale(1.08) rotate(-4deg);
+}
+
+
+/* =========================================================
+   7. DECISION ENGINE — THE HERO
+   ========================================================= */
+
+.whatif-theater {
+  position: relative;
+  overflow: hidden;
+  animation: engine-enter 850ms 360ms var(--ease-salora) both;
+}
+
+@keyframes engine-enter {
+  from {
+    opacity: 0;
+    transform: translateY(26px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+
+/* subtle gold cinematic edge */
+
+.whatif-theater::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  opacity: 0;
+  background:
+    linear-gradient(
+      115deg,
+      transparent 20%,
+      rgba(212, 175, 55, 0.12) 45%,
+      transparent 70%
+    );
+  transform: translateX(-100%);
+}
+
+.whatif-theater.theater-live::before {
+  animation: cinematic-sweep 1200ms var(--ease-salora) both;
+}
+
+@keyframes cinematic-sweep {
+  0% {
+    opacity: 0;
+    transform: translateX(-100%);
+  }
+
+  15% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+}
+
+
+/* =========================================================
+   8. ENGINE HEADER
+   ========================================================= */
+
+.theater-header-v3 {
+  animation: engine-header-enter 700ms 480ms var(--ease-salora) both;
+}
+
+@keyframes engine-header-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.theater-kicker {
+  transition:
+    letter-spacing var(--motion-smooth) var(--ease-salora);
+}
+
+.whatif-theater:hover .theater-kicker {
+  letter-spacing: 0.12em;
+}
+
+
+/* =========================================================
+   9. REQUEST PANEL
+   ========================================================= */
+
+.walkin-request-panel {
+  animation: request-panel-enter 700ms 560ms var(--ease-salora) both;
+}
+
+@keyframes request-panel-enter {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.input-shell {
+  transition:
+    border-color var(--motion-base) var(--ease-salora),
+    box-shadow var(--motion-base) var(--ease-salora),
+    transform var(--motion-base) var(--ease-salora);
+}
+
+.input-shell:focus-within {
+  transform: translateY(-1px);
+  box-shadow:
+    0 0 0 3px rgba(212, 175, 55, 0.08),
+    0 10px 30px rgba(0, 0, 0, 0.08);
+}
+
+
+/* =========================================================
+   10. PREMIUM SIMULATE BUTTON
+   ========================================================= */
+
+.theater-simulate {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  transition:
+    transform var(--motion-base) var(--ease-spring),
+    box-shadow var(--motion-base) var(--ease-salora),
+    background var(--motion-base) var(--ease-salora);
+}
+
+.theater-simulate::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(
+      110deg,
+      transparent 20%,
+      rgba(255, 255, 255, 0.28) 48%,
+      transparent 72%
+    );
+  transform: translateX(-130%);
+  pointer-events: none;
+}
+
+.theater-simulate:hover::before {
+  animation: button-sheen 800ms var(--ease-salora);
+}
+
+@keyframes button-sheen {
+  from {
+    transform: translateX(-130%);
+  }
+
+  to {
+    transform: translateX(130%);
+  }
+}
+
+.theater-simulate:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 12px 28px rgba(212, 175, 55, 0.18);
+}
+
+.theater-simulate:active {
+  transform: translateY(1px) scale(0.985);
+}
+
+
+/* =========================================================
+   11. SIMULATION ANALYSIS
+   ========================================================= */
+
+.theater-analysis {
+  animation: analysis-enter 500ms var(--ease-salora) both;
+}
+
+@keyframes analysis-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.analysis-progress {
+  position: relative;
+  overflow: hidden;
+}
+
+.analysis-progress::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 80px;
+  background:
+    linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.35),
+      transparent
+    );
+  transform: translateX(-100%);
+  animation: analysis-scan 1.1s linear infinite;
+}
+
+@keyframes analysis-scan {
+  to {
+    transform: translateX(700%);
+  }
+}
+
+.analysis-stages span {
+  animation: stage-reveal 450ms var(--ease-salora) both;
+}
+
+.analysis-stages span:nth-child(1) {
+  animation-delay: 80ms;
+}
+
+.analysis-stages span:nth-child(2) {
+  animation-delay: 160ms;
+}
+
+.analysis-stages span:nth-child(3) {
+  animation-delay: 240ms;
+}
+
+.analysis-stages span:nth-child(4) {
+  animation-delay: 320ms;
+}
+
+.analysis-stages span:nth-child(5) {
+  animation-delay: 400ms;
+}
+
+@keyframes stage-reveal {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+
+/* =========================================================
+   12. TIMELINE — SIGNATURE SALORA RIPPLE
+   ========================================================= */
+
+.timeline-theater {
+  position: relative;
+  animation: timeline-enter 800ms 620ms var(--ease-salora) both;
+}
+
+@keyframes timeline-enter {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+
+/* vertical simulation scan */
+
+.theater-live .timeline-theater::after {
+  content: "";
+  position: absolute;
+  top: 42px;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  pointer-events: none;
+  background:
+    linear-gradient(
+      to bottom,
+      transparent,
+      rgba(212, 175, 55, 0.9),
+      transparent
+    );
+  box-shadow:
+    0 0 18px rgba(212, 175, 55, 0.45);
+  animation: timeline-ripple 1300ms var(--ease-salora) both;
+}
+
+@keyframes timeline-ripple {
+  from {
+    left: 0%;
+    opacity: 0;
+  }
+
+  12% {
+    opacity: 1;
+  }
+
+  100% {
+    left: 100%;
+    opacity: 0;
+  }
+}
+
+
+/* =========================================================
+   13. SCHEDULE BLOCKS
+   ========================================================= */
+
+.booked-block {
+  transition:
+    transform var(--motion-base) var(--ease-salora),
+    box-shadow var(--motion-base) var(--ease-salora),
+    filter var(--motion-base) var(--ease-salora);
+}
+
+.booked-block:hover,
+.booked-block.block-focused {
+  transform: translateY(-3px);
+  filter: brightness(1.04);
+  box-shadow:
+    0 10px 22px rgba(0, 0, 0, 0.12);
+}
+
+
+/* =========================================================
+   14. WALK-IN ARRIVAL
+   ========================================================= */
+
+.walkin-block {
+  position: relative;
+  overflow: visible;
+  transform-origin: center;
+}
+
+.walkin-enter {
+  animation:
+    walkin-arrival 850ms var(--ease-spring) both,
+    walkin-breathe 2.4s 900ms ease-in-out infinite;
+}
+
+@keyframes walkin-arrival {
+  0% {
+    opacity: 0;
+    transform:
+      translateX(-24px)
+      scale(0.88);
+  }
+
+  55% {
+    opacity: 1;
+    transform:
+      translateX(4px)
+      scale(1.03);
+  }
+
+  100% {
+    opacity: 1;
+    transform:
+      translateX(0)
+      scale(1);
+  }
+}
+
+@keyframes walkin-breathe {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 rgba(212, 175, 55, 0);
+  }
+
+  50% {
+    box-shadow:
+      0 0 24px rgba(212, 175, 55, 0.28);
+  }
+}
+
+.walkin-glow {
+  position: absolute;
+  inset: -8px;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.walkin-enter .walkin-glow {
+  animation: walkin-radar 1200ms 250ms var(--ease-salora) both;
+}
+
+@keyframes walkin-radar {
+  0% {
+    opacity: 0.8;
+    transform: scale(0.85);
+    box-shadow:
+      0 0 0 0 rgba(212, 175, 55, 0.55);
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(1.18);
+    box-shadow:
+      0 0 0 18px rgba(212, 175, 55, 0);
+  }
+}
+
+
+/* =========================================================
+   15. DECISION RESULT REVEAL
+   ========================================================= */
+
+.theater-impact {
+  animation: decision-enter 800ms var(--ease-salora) both;
+  transform-origin: center top;
+}
+
+@keyframes decision-enter {
+  from {
+    opacity: 0;
+    transform:
+      translateY(20px)
+      scale(0.985);
+  }
+
+  60% {
+    opacity: 1;
+    transform:
+      translateY(-2px)
+      scale(1.002);
+  }
+
+  to {
+    opacity: 1;
+    transform:
+      translateY(0)
+      scale(1);
+  }
+}
+
+
+/* decision icon */
+
+.impact-icon {
+  animation: decision-icon-pop 700ms 180ms var(--ease-spring) both;
+}
+
+@keyframes decision-icon-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.45) rotate(-15deg);
+  }
+
+  70% {
+    transform: scale(1.12) rotate(3deg);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1) rotate(0);
+  }
+}
+
+
+/* =========================================================
+   16. DECISION STATE ORB
+   ========================================================= */
+
+.state-orb {
+  position: relative;
+  transition:
+    transform var(--motion-smooth) var(--ease-spring),
+    box-shadow var(--motion-smooth) var(--ease-salora);
+}
+
+.state-orb::after {
+  content: "";
+  position: absolute;
+  inset: -7px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  opacity: 0;
+}
+
+.theater-impact {
+  animation-name: decision-enter, decision-orbit;
+  animation-duration: 800ms, 2.8s;
+  animation-timing-function: var(--ease-salora), ease-in-out;
+  animation-iteration-count: 1, infinite;
+  animation-fill-mode: both, both;
+}
+
+@keyframes decision-orbit {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 rgba(212, 175, 55, 0);
+  }
+
+  50% {
+    box-shadow:
+      0 0 28px rgba(212, 175, 55, 0.12);
+  }
+}
+
+
+/* =========================================================
+   17. DECISION METRICS
+   ========================================================= */
+
+.impact-metric-v3 {
+  animation: metric-reveal 600ms var(--ease-salora) both;
+}
+
+.impact-metric-v3:nth-child(1) {
+  animation-delay: 160ms;
+}
+
+.impact-metric-v3:nth-child(2) {
+  animation-delay: 230ms;
+}
+
+.impact-metric-v3:nth-child(3) {
+  animation-delay: 300ms;
+}
+
+.impact-metric-v3:nth-child(4) {
+  animation-delay: 370ms;
+}
+
+@keyframes metric-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.impact-metric-v3 strong {
+  transition:
+    transform var(--motion-base) var(--ease-spring);
+}
+
+.impact-metric-v3:hover strong {
+  transform: scale(1.05);
+}
+
+
+/* =========================================================
+   18. ACCEPT BUTTON
+   ========================================================= */
+
+.theater-accept {
+  position: relative;
+  overflow: hidden;
+  transition:
+    transform var(--motion-base) var(--ease-spring),
+    box-shadow var(--motion-base) var(--ease-salora);
+}
+
+.theater-accept::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(
+      110deg,
+      transparent 15%,
+      rgba(255, 255, 255, 0.2) 50%,
+      transparent 85%
+    );
+  transform: translateX(-120%);
+}
+
+.theater-accept:hover::after {
+  animation: accept-sheen 800ms var(--ease-salora);
+}
+
+@keyframes accept-sheen {
+  from {
+    transform: translateX(-120%);
+  }
+
+  to {
+    transform: translateX(120%);
+  }
+}
+
+.theater-accept:hover {
+  transform: translateY(-3px);
+  box-shadow:
+    0 14px 30px rgba(0, 0, 0, 0.16);
+}
+
+.theater-accept:active {
+  transform: translateY(0) scale(0.985);
+}
+
+
+/* =========================================================
+   19. BEST ALTERNATIVE
+   ========================================================= */
+
+.decision-alternative-highlight {
+  animation: alternative-enter 650ms 500ms var(--ease-salora) both;
+}
+
+@keyframes alternative-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+
+/* =========================================================
+   20. ALTERNATIVES
+   ========================================================= */
+
+.theater-alternatives {
+  animation: alternatives-enter 500ms var(--ease-salora) both;
+}
+
+@keyframes alternatives-enter {
+  from {
+    opacity: 0;
+    max-height: 0;
+    transform: translateY(-8px);
+  }
+
+  to {
+    opacity: 1;
+    max-height: 600px;
+    transform: translateY(0);
+  }
+}
+
+.theater-alt {
+  transition:
+    transform var(--motion-base) var(--ease-salora),
+    box-shadow var(--motion-base) var(--ease-salora);
+}
+
+.theater-alt:hover {
+  transform: translateY(-4px);
+  box-shadow:
+    0 12px 26px rgba(0, 0, 0, 0.1);
+}
+
+
+/* =========================================================
+   21. OPERATIONS CARDS
+   ========================================================= */
+
+.operations-card {
+  animation: operations-enter 650ms var(--ease-salora) both;
+}
+
+.operations-card:nth-child(1) {
+  animation-delay: 480ms;
+}
+
+.operations-card:nth-child(2) {
+  animation-delay: 560ms;
+}
+
+@keyframes operations-enter {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.operations-card {
+  transition:
+    transform var(--motion-smooth) var(--ease-salora),
+    box-shadow var(--motion-smooth) var(--ease-salora);
+}
+
+.operations-card:hover {
+  transform: translateY(-4px);
+}
+
+
+/* =========================================================
+   22. CAPACITY METER
+   ========================================================= */
+
+.capacity-track {
+  overflow: hidden;
+}
+
+.capacity-track i {
+  transform-origin: left center;
+  animation: capacity-grow 1100ms 700ms var(--ease-salora) both;
+}
+
+@keyframes capacity-grow {
+  from {
+    width: 0 !important;
+  }
+}
+
+
+/* =========================================================
+   23. SALORA PULSE
+   ========================================================= */
+
+.bottom-strip {
+  animation: pulse-strip-enter 700ms 800ms var(--ease-salora) both;
+}
+
+@keyframes pulse-strip-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.pulse-bar {
+  overflow: hidden;
+}
+
+.pulse-bar i {
+  transform-origin: left center;
+  animation: pulse-bar-grow 1200ms 900ms var(--ease-salora) both;
+}
+
+@keyframes pulse-bar-grow {
+  from {
+    width: 0 !important;
+  }
+}
+
+
+/* =========================================================
+   24. HISTORY
+   ========================================================= */
+
+.history-panel {
+  animation: history-enter 650ms 720ms var(--ease-salora) both;
+}
+
+@keyframes history-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.history-row {
+  transition:
+    background var(--motion-base) var(--ease-salora),
+    transform var(--motion-base) var(--ease-salora);
+}
+
+.history-row:hover {
+  transform: translateX(4px);
+}
+
+
+/* =========================================================
+   25. SUCCESS — ACCEPTANCE MOMENT
+   ========================================================= */
+
+.success-v2 {
+  animation:
+    success-enter 650ms var(--ease-spring) both,
+    success-glow 2.4s 650ms ease-in-out infinite;
+}
+
+@keyframes success-enter {
+  from {
+    opacity: 0;
+    transform:
+      translateY(-12px)
+      scale(0.97);
+  }
+
+  70% {
+    transform:
+      translateY(2px)
+      scale(1.01);
+  }
+
+  to {
+    opacity: 1;
+    transform:
+      translateY(0)
+      scale(1);
+  }
+}
+
+@keyframes success-glow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 rgba(101, 200, 149, 0);
+  }
+
+  50% {
+    box-shadow:
+      0 0 24px rgba(101, 200, 149, 0.12);
+  }
+}
+
+
+/* =========================================================
+   26. ERROR REVEAL
+   ========================================================= */
+
+.alert-v2 {
+  animation: alert-enter 420ms var(--ease-spring) both;
+}
+
+@keyframes alert-enter {
+  from {
+    opacity: 0;
+    transform:
+      translateY(-8px)
+      scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform:
+      translateY(0)
+      scale(1);
+  }
+}
+
+
+/* =========================================================
+   27. REFRESH
+   ========================================================= */
+
+.iconbtn {
+  transition:
+    transform var(--motion-base) var(--ease-spring),
+    background var(--motion-base) var(--ease-salora);
+}
+
+.iconbtn:hover {
+  transform: rotate(12deg);
+}
+
+.iconbtn.is-refreshing svg,
+.spin {
+  animation: refresh-spin 750ms linear infinite;
+}
+
+@keyframes refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+
+/* =========================================================
+   28. LOADING EXPERIENCE
+   ========================================================= */
+
+.loading-shell {
+  animation: loading-shell-enter 650ms var(--ease-salora) both;
+}
+
+@keyframes loading-shell-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.spinner {
+  animation:
+    spinner-rotate 900ms linear infinite,
+    spinner-glow 1.8s ease-in-out infinite;
+}
+
+@keyframes spinner-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes spinner-glow {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 0 rgba(212, 175, 55, 0));
+  }
+
+  50% {
+    filter: drop-shadow(
+      0 0 10px rgba(212, 175, 55, 0.35)
+    );
+  }
+}
+
+
+/* =========================================================
+   29. CHEVRON MICRO-INTERACTION
+   ========================================================= */
+
+.rotate-180 {
+  transform: rotate(180deg);
+  transition: transform var(--motion-base) var(--ease-salora);
+}
+
+
+/* =========================================================
+   30. SECONDARY ACTIONS
+   ========================================================= */
+
+.secondary-action {
+  transition:
+    transform var(--motion-base) var(--ease-spring),
+    border-color var(--motion-base) var(--ease-salora),
+    background var(--motion-base) var(--ease-salora);
+}
+
+.secondary-action:hover {
+  transform: translateY(-2px);
+}
+
+
+/* =========================================================
+   31. SCHEDULE VIEW
+   ========================================================= */
+
+.secondary-view {
+  animation: secondary-view-enter 650ms var(--ease-salora) both;
+}
+
+@keyframes secondary-view-enter {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.schedule-item-v2 {
+  animation: schedule-row-enter 500ms var(--ease-salora) both;
+}
+
+.schedule-item-v2:nth-child(1) {
+  animation-delay: 80ms;
+}
+
+.schedule-item-v2:nth-child(2) {
+  animation-delay: 140ms;
+}
+
+.schedule-item-v2:nth-child(3) {
+  animation-delay: 200ms;
+}
+
+.schedule-item-v2:nth-child(4) {
+  animation-delay: 260ms;
+}
+
+.schedule-item-v2:nth-child(5) {
+  animation-delay: 320ms;
+}
+
+@keyframes schedule-row-enter {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+
+/* =========================================================
+   32. CUSTOMER EMPTY STATE
+   ========================================================= */
+
+.customer-placeholder {
+  animation: customer-empty-enter 700ms var(--ease-salora) both;
+}
+
+.customer-placeholder > svg {
+  animation: customer-icon-float 2.8s ease-in-out infinite;
+}
+
+@keyframes customer-empty-enter {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes customer-icon-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+
+/* =========================================================
+   33. BUTTON ICON MOVEMENT
+   ========================================================= */
+
+.theater-accept svg:last-child,
+.secondary-action svg:last-child {
+  transition:
+    transform var(--motion-base) var(--ease-spring);
+}
+
+.theater-accept:hover svg:last-child,
+.secondary-action:hover svg:last-child {
+  transform: translateX(4px);
+}
+
+
+/* =========================================================
+   34. FOCUS ACCESSIBILITY
+   ========================================================= */
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 3px;
+}
+
+
+/* =========================================================
+   35. REDUCED MOTION
+   ========================================================= */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+
+/* =========================================================
+   36. MOBILE — KEEP MOTION FAST AND CLEAN
+   ========================================================= */
+
+@media (max-width: 700px) {
+  .whatif-theater.theater-live::before {
+    animation-duration: 850ms;
+  }
+
+  .theater-live .timeline-theater::after {
+    animation-duration: 900ms;
+  }
+
+  .pulse-card:hover,
+  .premium-kpi:hover,
+  .operations-card:hover {
+    transform: none;
+  }
+
+  .walkin-enter {
+    animation:
+      walkin-arrival 650ms var(--ease-spring) both,
+      walkin-breathe 2.8s 700ms ease-in-out infinite;
+  }
+}
