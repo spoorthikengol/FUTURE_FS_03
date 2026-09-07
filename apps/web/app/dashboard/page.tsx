@@ -3,7 +3,6 @@
 import {
   Activity,
   AlertTriangle,
-  ArrowUpRight,
   CalendarDays,
   CheckCircle2,
   ChevronDown,
@@ -23,7 +22,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type DecisionState =
   | "ACCEPT"
@@ -33,46 +32,41 @@ type DecisionState =
 
 type Decision = {
   state: DecisionState;
-  stylistId: string;
-  start: string;
-  end: string;
-  revenue: number;
-  totalDelay: number;
-  maxDelay: number;
-  wait: number;
-  affected: number;
-  reason: string;
+  confidence?: number;
+  message?: string;
+  explanation?: string;
 };
 
 type Service = {
   id: string;
   name: string;
-  duration_min: number;
-  price_inr: number;
-  buffer_min: number;
+  duration_minutes: number;
+  price: number;
 };
 
 type Stylist = {
   id: string;
   name: string;
+  active: boolean;
 };
 
 type Appointment = {
   id: string;
-  customer?: string;
-  service: string;
-  stylist: string;
-  stylist_id?: string;
+  customer_name?: string;
+  service_name?: string;
+  stylist_name?: string;
   scheduled_start: string;
-  scheduled_end?: string;
+  scheduled_end: string;
   status: string;
+  price?: number;
 };
 
 type Salon = {
+  id: string;
   name: string;
-  timezone: string;
-  open_time?: string;
-  close_time?: string;
+  timezone?: string;
+  opening_time?: string;
+  closing_time?: string;
 };
 
 type DashboardData = {
@@ -80,126 +74,286 @@ type DashboardData = {
   services: Service[];
   stylists: Stylist[];
   appointments: Appointment[];
-
-  bookedMinutes?: number;
-  availableCapacityMinutes?: number;
-  utilizationPercent?: number;
-  schedulePressure?: number;
-
-  acceptedWalkInsToday?: number;
-  acceptedWalkInRevenueToday?: number;
-  simulationCountToday?: number;
-
-  noShowsToday?: number;
-  cancellationsToday?: number;
-
-  todayRevenuePotential?: number;
+  decision?: Decision | null;
+  metrics?: {
+    today_revenue?: number;
+    today_appointments?: number;
+    completed_today?: number;
+    cancelled_today?: number;
+    no_show_today?: number;
+  };
 };
 
 type HistoryItem = {
   id: string;
-  service: string;
-  state: DecisionState;
-  stylist: string;
-  start: string;
-  revenue: number;
-  delay: number;
-  affected: number;
   createdAt: string;
+  customerName: string;
+  serviceName: string;
+  decision: DecisionState;
+  price: number;
+  delay: number;
 };
 
+type Customer = {
+  id: string;
+  name: string;
+  phone?: string;
+  email?: string;
+  created_at?: string;
+};
+
+type ActiveView = "overview" | "schedule" | "customers";
+
+type SimulationResponse = {
+  simulation_id?: string;
+  decision?: Decision;
+  recommendation?: Decision;
+  selected_option?: {
+    id?: string;
+    stylist_id?: string;
+    start?: string;
+    end?: string;
+    revenue?: number;
+    total_delay?: number;
+    max_delay?: number;
+    affected_appointments?: number;
+    customer_wait?: number;
+  };
+  options?: Array<{
+    id?: string;
+    stylist_id?: string;
+    stylist_name?: string;
+    start?: string;
+    end?: string;
+    revenue?: number;
+    total_delay?: number;
+    max_delay?: number;
+    affected_appointments?: number;
+    customer_wait?: number;
+    decision?: DecisionState;
+  }>;
+  explanation?: string;
+};
+
+type AcceptResponse = {
+  appointment?: Appointment;
+  decision?: Decision;
+  message?: string;
+};
+
+const HISTORY_KEY = "salora_decision_history";
+
+const DECISION_STATES: DecisionState[] = [
+  "ACCEPT",
+  "ACCEPT_WITH_WARNING",
+  "WAIT",
+  "RESCHEDULE",
+];
+
 function formatCurrency(value: number) {
-  return `₹${Math.round(value).toLocaleString("en-IN")}`;
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(value || 0);
 }
 
-function formatTime(value: string) {
-  return new Date(value).toLocaleTimeString([], {
+function formatTime(value: string | undefined) {
+  if (!value) return "—";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatDateTime(value: string | undefined) {
+  if (!value) return "—";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
     hour: "2-digit",
     minute: "2-digit",
   });
 }
 
 function stateLabel(state: DecisionState) {
-  return state.replaceAll("_", " ");
+  switch (state) {
+    case "ACCEPT":
+      return "Accept";
+    case "ACCEPT_WITH_WARNING":
+      return "Accept with warning";
+    case "WAIT":
+      return "Wait";
+    case "RESCHEDULE":
+      return "Reschedule";
+    default:
+      return state;
+  }
 }
 
 function stateClass(state: DecisionState) {
-  return state.toLowerCase().replaceAll("_", "-");
+  switch (state) {
+    case "ACCEPT":
+      return "decision-good";
+    case "ACCEPT_WITH_WARNING":
+      return "decision-warning";
+    case "WAIT":
+      return "decision-wait";
+    case "RESCHEDULE":
+      return "decision-danger";
+    default:
+      return "";
+  }
 }
 
-function statusIcon(state: DecisionState) {
-  if (state === "ACCEPT") {
-    return <CheckCircle2 size={19} />;
+function statusIcon(status: string) {
+  const normalized = status.toUpperCase();
+
+  if (normalized === "COMPLETED") {
+    return <CheckCircle2 size={14} />;
   }
 
-  if (state === "WAIT") {
-    return <Timer size={19} />;
+  if (normalized === "CANCELLED") {
+    return <X size={14} />;
   }
 
-  if (state === "ACCEPT_WITH_WARNING") {
-    return <AlertTriangle size={19} />;
+  if (normalized === "NO_SHOW") {
+    return <AlertTriangle size={14} />;
   }
 
-  return <ShieldCheck size={19} />;
+  return <Clock3 size={14} />;
 }
 
 function statusDescription(state: DecisionState) {
   switch (state) {
     case "ACCEPT":
-      return "Immediate placement with no scheduled customer delay.";
-
+      return "The walk-in can be served without disrupting booked customers.";
     case "ACCEPT_WITH_WARNING":
-      return "Placement is feasible but creates measurable downstream delay.";
-
+      return "The walk-in is possible but creates a manageable downstream impact.";
     case "WAIT":
-      return "A safer placement becomes available after a short wait.";
-
+      return "The current schedule is temporarily tight. Waiting preserves the safer slot.";
     case "RESCHEDULE":
-      return "Current constraints do not support a safe placement.";
+      return "The current schedule cannot safely absorb this request.";
+    default:
+      return "";
   }
 }
 
-function stateAccent(state: DecisionState) {
+function decisionHeadline(state: DecisionState) {
   switch (state) {
     case "ACCEPT":
-      return "sage";
-
+      return "Safe to accept";
     case "ACCEPT_WITH_WARNING":
-      return "warning";
-
+      return "Accept carefully";
     case "WAIT":
-      return "wait";
-
+      return "Wait for capacity";
     case "RESCHEDULE":
-      return "danger";
+      return "Protect the schedule";
+    default:
+      return "Decision";
   }
 }
 
-export default function Dashboard() {
-  const [d, setD] = useState<DashboardData | null>(null);
+function decisionTone(state: DecisionState) {
+  switch (state) {
+    case "ACCEPT":
+      return "positive";
+    case "ACCEPT_WITH_WARNING":
+      return "warning";
+    case "WAIT":
+      return "wait";
+    case "RESCHEDULE":
+      return "danger";
+    default:
+      return "neutral";
+  }
+}
 
-  const [svc, setSvc] = useState("");
-  const [customerName, setCustomerName] = useState("");
+function loadHistory(): HistoryItem[] {
+  if (typeof window === "undefined") return [];
 
-  const [dec, setDec] = useState<Decision | null>(null);
-  const [candidates, setCandidates] = useState<Decision[]>([]);
+  try {
+    const stored = window.localStorage.getItem(HISTORY_KEY);
 
-  const [busy, setBusy] = useState(false);
-  const [accepted, setAccepted] = useState(false);
-  const [error, setError] = useState("");
+    if (!stored) return [];
 
-  const [stage, setStage] = useState(0);
-  const [theaterActive, setTheaterActive] = useState(false);
+    const parsed = JSON.parse(stored);
 
-  const [activeView, setActiveView] = useState<
-    "overview" | "schedule" | "customers"
-  >("overview");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
+function saveHistory(items: HistoryItem[]) {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.localStorage.setItem(
+      HISTORY_KEY,
+      JSON.stringify(items.slice(0, 30)),
+    );
+  } catch {
+    // Local storage may be unavailable.
+  }
+}
+
+export default function DashboardPage() {
+  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [showHistory, setShowHistory] = useState(false);
-  const [showAlternatives, setShowAlternatives] = useState(false);
 
-  const load = async () => {
+  const [activeView, setActiveView] = useState<ActiveView>("overview");
+
+  const [customerName, setCustomerName] = useState("");
+  const [serviceId, setServiceId] = useState("");
+
+  const [simulation, setSimulation] =
+    useState<SimulationResponse | null>(null);
+
+  const [selectedOptionId, setSelectedOptionId] = useState<string | null>(
+    null,
+  );
+
+  const [loading, setLoading] = useState(true);
+  const [customersLoading, setCustomersLoading] = useState(false);
+  const [simulating, setSimulating] = useState(false);
+  const [accepting, setAccepting] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const [error, setError] = useState("");
+  const [online, setOnline] = useState(true);
+
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  const [simulationStage, setSimulationStage] = useState(0);
+
+  const serviceInputRef = useRef<HTMLSelectElement | null>(null);
+  const theaterRef = useRef<HTMLDivElement | null>(null);
+
+  const simulationStages = [
+    "Reading current salon state",
+    "Generating candidate placements",
+    "Simulating downstream impact",
+    "Checking hard constraints",
+    "Ranking safe outcomes",
+  ];
+
+  async function loadDashboard() {
     try {
       setError("");
 
@@ -208,1909 +362,1866 @@ export default function Dashboard() {
         cache: "no-store",
       });
 
-      if (!response.ok) {
+      if (response.status === 401) {
         window.location.href = "/login";
         return;
       }
 
+      if (!response.ok) {
+        throw new Error("Unable to load dashboard.");
+      }
+
+      const data = (await response.json()) as DashboardData;
+
+      setDashboard(data);
+
+      if (!serviceId && data.services?.length) {
+        setServiceId(data.services[0].id);
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Unable to load dashboard.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadCustomers() {
+    try {
+      setCustomersLoading(true);
+
+      const response = await fetch("/api/customers", {
+        credentials: "include",
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        throw new Error("Unable to load customers.");
+      }
+
       const data = await response.json();
 
-      setD(data);
-    } catch {
-      setError("Could not load the live salon state.");
+      if (Array.isArray(data)) {
+        setCustomers(data);
+      } else if (Array.isArray(data.customers)) {
+        setCustomers(data.customers);
+      } else {
+        setCustomers([]);
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Unable to load customers.",
+      );
+    } finally {
+      setCustomersLoading(false);
     }
-  };
+  }
 
   useEffect(() => {
-    load();
+    setHistory(loadHistory());
+    void loadDashboard();
   }, []);
 
   useEffect(() => {
-    if (!busy) return;
+    const handleOnline = () => setOnline(true);
+    const handleOffline = () => setOnline(false);
 
-    setStage(0);
+    setOnline(navigator.onLine);
 
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  useEffect(() => {
     const timer = window.setInterval(() => {
-      setStage((value) => Math.min(value + 1, 4));
-    }, 300);
+      setCurrentTime(new Date());
+    }, 1000);
 
     return () => window.clearInterval(timer);
-  }, [busy]);
+  }, []);
 
-  const selected = useMemo(
-    () => d?.services?.find((service) => service.id === svc),
-    [d, svc],
-  );
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void loadDashboard();
+    }, 60_000);
 
-  const appointments = d?.appointments ?? [];
+    return () => window.clearInterval(timer);
+  }, []);
 
-  const actualUtilization = useMemo(() => {
-    if (typeof d?.utilizationPercent === "number") {
-      return Math.min(
-        100,
-        Math.max(0, Math.round(d.utilizationPercent)),
-      );
+  useEffect(() => {
+    if (activeView === "customers" && customers.length === 0) {
+      void loadCustomers();
+    }
+  }, [activeView]);
+
+  useEffect(() => {
+    if (!simulating) {
+      setSimulationStage(0);
+      return;
     }
 
-    if (typeof d?.schedulePressure === "number") {
-      return Math.min(
-        100,
-        Math.max(0, Math.round(d.schedulePressure)),
-      );
-    }
+    const timer = window.setInterval(() => {
+      setSimulationStage((current) => {
+        if (current >= simulationStages.length - 1) {
+          return current;
+        }
 
-    const stylistCount = Math.max(
-      1,
-      d?.stylists?.length ?? 1,
-    );
+        return current + 1;
+      });
+    }, 500);
+
+    return () => window.clearInterval(timer);
+  }, [simulating]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key === "/" &&
+        !["INPUT", "TEXTAREA", "SELECT"].includes(
+          document.activeElement?.tagName || "",
+        )
+      ) {
+        event.preventDefault();
+        serviceInputRef.current?.focus();
+      }
+
+      if (event.key === "Escape") {
+        setSimulation(null);
+        setSelectedOptionId(null);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  const selectedService = useMemo(() => {
+    return dashboard?.services?.find((service) => service.id === serviceId);
+  }, [dashboard?.services, serviceId]);
+
+  const appointments = useMemo(() => {
+    return dashboard?.appointments ?? [];
+  }, [dashboard?.appointments]);
+
+  const stylists = useMemo(() => {
+    return dashboard?.stylists ?? [];
+  }, [dashboard?.stylists]);
+
+  const todayAppointments = useMemo(() => {
+    return appointments.filter((appointment) => {
+      const date = new Date(appointment.scheduled_start);
+
+      if (Number.isNaN(date.getTime())) return false;
+
+      const now = new Date();
+
+      return (
+        date.getFullYear() === now.getFullYear() &&
+        date.getMonth() === now.getMonth() &&
+        date.getDate() === now.getDate()
+      );
+    });
+  }, [appointments]);
+
+  const utilization = useMemo(() => {
+    if (!stylists.length) return 0;
+
+    const activeStylists = stylists.filter((stylist) => stylist.active);
+
+    if (!activeStylists.length) return 0;
+
+    const now = currentTime.getTime();
+
+    const activeAppointments = appointments.filter((appointment) => {
+      const start = new Date(appointment.scheduled_start).getTime();
+      const end = new Date(appointment.scheduled_end).getTime();
+
+      return (
+        appointment.status !== "CANCELLED" &&
+        appointment.status !== "NO_SHOW" &&
+        appointment.status !== "COMPLETED" &&
+        start <= now &&
+        end > now
+      );
+    });
 
     return Math.min(
       100,
-      Math.round(
-        (appointments.length / (stylistCount * 4)) * 100,
-      ),
+      Math.round((activeAppointments.length / activeStylists.length) * 100),
     );
-  }, [d, appointments.length]);
+  }, [appointments, stylists, currentTime]);
 
-  const bookedMinutes = d?.bookedMinutes ?? 0;
+  const capacityLabel = useMemo(() => {
+    if (utilization >= 90) return "Very high";
+    if (utilization >= 70) return "High";
+    if (utilization >= 45) return "Balanced";
+    return "Open";
+  }, [utilization]);
 
-  const availableMinutes =
-    d?.availableCapacityMinutes ??
-    Math.max(0, d?.stylists?.length ?? 0) * 8 * 60 -
-      bookedMinutes;
+  const pressureLabel = useMemo(() => {
+    if (utilization >= 90) return "Critical";
+    if (utilization >= 75) return "Tight";
+    if (utilization >= 50) return "Moderate";
+    return "Healthy";
+  }, [utilization]);
 
-  const acceptedWalkIns =
-    d?.acceptedWalkInsToday ?? 0;
+  const pressureClass = useMemo(() => {
+    if (utilization >= 90) return "pressure-danger";
+    if (utilization >= 75) return "pressure-warning";
+    if (utilization >= 50) return "pressure-neutral";
+    return "pressure-good";
+  }, [utilization]);
 
-  const acceptedWalkInRevenue =
-    d?.acceptedWalkInRevenueToday ?? 0;
+  const recommendedStylist = useMemo(() => {
+    const selected = simulation?.selected_option;
 
-  const noShows = d?.noShowsToday ?? 0;
+    if (!selected?.stylist_id) return null;
 
-  const cancellations =
-    d?.cancellationsToday ?? 0;
+    return stylists.find((stylist) => stylist.id === selected.stylist_id) ?? null;
+  }, [simulation?.selected_option, stylists]);
 
-  const simulationCount =
-    d?.simulationCountToday ?? 0;
+  const recommendationIndex = useMemo(() => {
+    const options = simulation?.options ?? [];
 
-  const stylistRows = useMemo(() => {
-    if (!d?.stylists) return [];
+    if (!options.length) return -1;
 
-    return d.stylists.map((stylist) => ({
-      id: stylist.id,
-      name: stylist.name,
-      appointments: appointments
-        .filter(
-          (appointment) =>
-            appointment.stylist_id === stylist.id ||
-            appointment.stylist === stylist.name,
-        )
-        .sort(
-          (a, b) =>
-            new Date(a.scheduled_start).getTime() -
-            new Date(b.scheduled_start).getTime(),
-        ),
-    }));
-  }, [d, appointments]);
+    if (!selectedOptionId) return 0;
+
+    return options.findIndex((option) => option.id === selectedOptionId);
+  }, [simulation?.options, selectedOptionId]);
+
+  const filteredCustomers = useMemo(() => {
+    const query = customerName.trim().toLowerCase();
+
+    if (!query) return customers.slice(0, 8);
+
+    return customers
+      .filter((customer) => {
+        return (
+          customer.name.toLowerCase().includes(query) ||
+          customer.phone?.toLowerCase().includes(query) ||
+          customer.email?.toLowerCase().includes(query)
+        );
+      })
+      .slice(0, 8);
+  }, [customers, customerName]);
 
   const timelineBounds = useMemo(() => {
-    const now = Date.now();
+    const dates = appointments
+      .flatMap((appointment) => [
+        new Date(appointment.scheduled_start),
+        new Date(appointment.scheduled_end),
+      ])
+      .filter((date) => !Number.isNaN(date.getTime()));
 
-    const starts = appointments.map((appointment) =>
-      new Date(
-        appointment.scheduled_start,
-      ).getTime(),
-    );
+    if (!dates.length) {
+      const start = new Date(currentTime);
+      start.setHours(9, 0, 0, 0);
 
-    const ends = appointments.map((appointment) =>
-      appointment.scheduled_end
-        ? new Date(
-            appointment.scheduled_end,
-          ).getTime()
-        : new Date(
-            appointment.scheduled_start,
-          ).getTime() +
-          45 * 60 * 1000,
-    );
+      const end = new Date(start);
+      end.setHours(21, 0, 0, 0);
 
-    if (dec) {
-      starts.push(new Date(dec.start).getTime());
-      ends.push(new Date(dec.end).getTime());
+      return {
+        start: start.getTime(),
+        end: end.getTime(),
+      };
     }
 
-    const baseStart = Math.min(
-      starts.length ? Math.min(...starts) : now,
-      now,
-    );
+    const min = Math.min(...dates.map((date) => date.getTime()));
+    const max = Math.max(...dates.map((date) => date.getTime()));
 
-    const baseEnd = Math.max(
-      ends.length
-        ? Math.max(...ends)
-        : now + 3 * 60 * 60 * 1000,
-      now + 2 * 60 * 60 * 1000,
-    );
+    const start = new Date(min);
+    start.setMinutes(0, 0, 0);
+
+    const end = new Date(max);
+    end.setMinutes(0, 0, 0);
+    end.setHours(end.getHours() + 1);
 
     return {
-      start: baseStart - 30 * 60 * 1000,
-      end: baseEnd + 30 * 60 * 1000,
+      start: start.getTime(),
+      end: end.getTime(),
     };
-  }, [appointments, dec]);
+  }, [appointments, currentTime]);
 
-  const timelinePosition = (
-    start: string,
-    end?: string,
-  ) => {
-    const total =
-      timelineBounds.end -
-      timelineBounds.start;
+  const timelineMarks = useMemo(() => {
+    const start = new Date(timelineBounds.start);
+    const end = new Date(timelineBounds.end);
 
-    const startMs = new Date(start).getTime();
+    const marks: Date[] = [];
 
-    const endMs = end
-      ? new Date(end).getTime()
-      : startMs + 45 * 60 * 1000;
+    const cursor = new Date(start);
 
-    const left =
-      ((startMs - timelineBounds.start) /
-        total) *
-      100;
-
-    const width =
-      ((endMs - startMs) / total) * 100;
-
-    return {
-      left: `${Math.max(0, left)}%`,
-      width: `${Math.max(
-        5,
-        Math.min(width, 94),
-      )}%`,
-    };
-  };
-
-  const timeMarks = useMemo(() => {
-    const marks: number[] = [];
-    const hour = 60 * 60 * 1000;
-
-    let current =
-      Math.ceil(
-        timelineBounds.start / hour,
-      ) * hour;
-
-    while (current <= timelineBounds.end) {
-      marks.push(current);
-      current += hour;
+    while (cursor <= end) {
+      marks.push(new Date(cursor));
+      cursor.setMinutes(cursor.getMinutes() + 60);
     }
 
     return marks;
   }, [timelineBounds]);
 
-  const pressureLabel = useMemo(() => {
-    if (actualUtilization >= 85) {
-      return "High pressure";
-    }
+  const timelinePosition = (value: string) => {
+    const date = new Date(value);
 
-    if (actualUtilization >= 65) {
-      return "Moderate pressure";
-    }
+    if (Number.isNaN(date.getTime())) return 0;
 
-    return "Healthy capacity";
-  }, [actualUtilization]);
+    const total = timelineBounds.end - timelineBounds.start;
 
-  const pressureClass = useMemo(() => {
-    if (actualUtilization >= 85) {
-      return "pressure-high";
-    }
+    if (total <= 0) return 0;
 
-    if (actualUtilization >= 65) {
-      return "pressure-medium";
-    }
-
-    return "pressure-low";
-  }, [actualUtilization]);
-
-  const recommendedStylist = useMemo(() => {
-    if (!dec || !d) return null;
-
-    return (
-      d.stylists.find(
-        (stylist) =>
-          stylist.id === dec.stylistId,
-      ) ?? null
+    return Math.min(
+      100,
+      Math.max(
+        0,
+        ((date.getTime() - timelineBounds.start) / total) * 100,
+      ),
     );
-  }, [dec, d]);
+  };
 
-  async function simulate() {
-    if (!svc || busy) return;
+  const timelineWidth = (start: string, end: string) => {
+    const startDate = new Date(start);
+    const endDate = new Date(end);
 
-    setBusy(true);
+    if (
+      Number.isNaN(startDate.getTime()) ||
+      Number.isNaN(endDate.getTime())
+    ) {
+      return 0;
+    }
+
+    const total = timelineBounds.end - timelineBounds.start;
+
+    if (total <= 0) return 0;
+
+    return Math.max(
+      2,
+      Math.min(
+        100,
+        ((endDate.getTime() - startDate.getTime()) / total) * 100,
+      ),
+    );
+  };
+
+  async function simulateWalkIn() {
+    if (!selectedService) {
+      setError("Choose a service first.");
+      return;
+    }
+
     setError("");
-    setAccepted(false);
-    setTheaterActive(false);
-    setShowAlternatives(false);
+    setSimulation(null);
+    setSelectedOptionId(null);
+    setSimulating(true);
+    setSimulationStage(0);
 
     try {
-      const response = await fetch(
-        "/api/walk-ins/simulate",
-        {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-          },
-          credentials: "include",
-          body: JSON.stringify({
-            serviceId: svc,
-            now: new Date().toISOString(),
-          }),
+      const response = await fetch("/api/walk-ins/simulate", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
         },
-      );
+        body: JSON.stringify({
+          customer_name: customerName.trim() || "Walk-in customer",
+          service_id: selectedService.id,
+        }),
+      });
 
-      const result = await response.json();
+      const data = await response.json();
 
       if (!response.ok) {
         throw new Error(
-          result.error ||
-            "Simulation failed.",
+          data?.message || data?.error || "Simulation failed.",
         );
       }
 
-      setDec(result.recommendation ?? null);
-      setCandidates(result.candidates ?? []);
+      const result = data as SimulationResponse;
 
-      window.setTimeout(() => {
-        setTheaterActive(true);
-      }, 500);
-    } catch (error) {
-      setError(
-        error instanceof Error
-          ? error.message
-          : "Simulation failed.",
-      );
+      const decision = result.decision ?? result.recommendation;
+
+      setSimulation({
+        ...result,
+        decision,
+      });
+
+      if (result.options?.length) {
+        const firstOption = result.options[0];
+
+        if (firstOption.id) {
+          setSelectedOptionId(firstOption.id);
+        }
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Simulation failed.");
     } finally {
-      setBusy(false);
+      setSimulating(false);
     }
   }
 
-  async function accept() {
-    if (!dec || !svc || busy) return;
+  async function acceptWalkIn() {
+    if (!simulation) {
+      setError("Run a simulation before accepting.");
+      return;
+    }
 
-    setBusy(true);
+    if (!selectedService) {
+      setError("Choose a service first.");
+      return;
+    }
+
+    const decision = simulation.decision ?? simulation.recommendation;
+
+    if (!decision) {
+      setError("No decision is available.");
+      return;
+    }
+
+    if (
+      decision.state !== "ACCEPT" &&
+      decision.state !== "ACCEPT_WITH_WARNING"
+    ) {
+      setError("This walk-in is not currently safe to accept.");
+      return;
+    }
+
     setError("");
+    setAccepting(true);
 
     try {
-      const response = await fetch(
-        "/api/walk-ins/accept",
-        {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "idempotency-key":
-              crypto.randomUUID(),
-          },
-          credentials: "include",
-          body: JSON.stringify({
-            serviceId: svc,
-            stylistId: dec.stylistId,
-            startAt: dec.start,
-            decisionState: dec.state,
-            customerName:
-              customerName.trim() ||
-              undefined,
-          }),
-        },
-      );
+      const idempotencyKey = crypto.randomUUID();
 
-      const result = await response.json();
+      const response = await fetch("/api/walk-ins/accept", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKey,
+        },
+        body: JSON.stringify({
+          customer_name: customerName.trim() || "Walk-in customer",
+          service_id: selectedService.id,
+          simulation_id: simulation.simulation_id,
+          option_id:
+            selectedOptionId ??
+            simulation.selected_option?.id ??
+            undefined,
+        }),
+      });
+
+      const data = (await response.json()) as AcceptResponse & {
+        error?: string;
+      };
 
       if (!response.ok) {
         throw new Error(
-          result.error ||
-            "Acceptance failed. Please simulate again.",
+          data?.message || data?.error || "Unable to accept walk-in.",
         );
       }
 
-      const stylistName =
-        d?.stylists?.find(
-          (stylist) =>
-            stylist.id ===
-            dec.stylistId,
-        )?.name ??
-        "Recommended stylist";
+      const newAppointment = data.appointment;
 
       const historyItem: HistoryItem = {
         id: crypto.randomUUID(),
-        service:
-          selected?.name ??
-          "Walk-in service",
-        state: dec.state,
-        stylist: stylistName,
-        start: dec.start,
-        revenue: dec.revenue,
-        delay: dec.maxDelay,
-        affected: dec.affected,
-        createdAt:
-          new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        customerName: customerName.trim() || "Walk-in customer",
+        serviceName: selectedService.name,
+        decision:
+          data.decision?.state ??
+          decision.state,
+        price:
+          newAppointment?.price ??
+          selectedService.price ??
+          simulation.selected_option?.revenue ??
+          0,
+        delay:
+          simulation.selected_option?.max_delay ??
+          0,
       };
 
-      setHistory((items) =>
-        [historyItem, ...items].slice(
-          0,
-          10,
-        ),
-      );
+      const nextHistory = [historyItem, ...history].slice(0, 30);
 
-      setAccepted(true);
-      setDec(null);
-      setCandidates([]);
-      setTheaterActive(false);
+      setHistory(nextHistory);
+      saveHistory(nextHistory);
+
+      setSimulation(null);
+      setSelectedOptionId(null);
       setCustomerName("");
-      setSvc("");
 
-      await load();
-    } catch (error) {
+      await loadDashboard();
+    } catch (err) {
       setError(
-        error instanceof Error
-          ? error.message
-          : "Acceptance failed. Please simulate again.",
+        err instanceof Error
+          ? err.message
+          : "Unable to accept walk-in.",
       );
     } finally {
-      setBusy(false);
+      setAccepting(false);
     }
   }
 
   async function logout() {
+    setLoggingOut(true);
+
     try {
       await fetch("/api/auth/logout", {
         method: "POST",
         credentials: "include",
       });
     } finally {
-      window.location.href = "/";
+      window.location.href = "/login";
     }
   }
 
-  function resetSimulation() {
-    setSvc("");
-    setCustomerName("");
-    setDec(null);
-    setCandidates([]);
-    setTheaterActive(false);
-    setAccepted(false);
+  function resetDecision() {
+    setSimulation(null);
+    setSelectedOptionId(null);
     setError("");
-    setShowAlternatives(false);
   }
 
-  function changeView(
-    view:
-      | "overview"
-      | "schedule"
-      | "customers",
-  ) {
-    setActiveView(view);
-
-    if (view !== "overview") {
-      setShowAlternatives(false);
-    }
+  function scrollToTheater() {
+    theaterRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
   }
 
-  if (!d) {
+  if (loading) {
     return (
-      <div className="loading">
-        <div className="loading-shell">
-          <div className="spinner" />
-
-          <b>
-            Loading SALORA command center…
-          </b>
-
-          <span>
-            Synchronizing the live salon state
-          </span>
+      <main className="dashboard-shell dashboard-loading">
+        <div className="loading-orb">
+          <Sparkles size={22} />
         </div>
-      </div>
+
+        <p>Loading SALORA intelligence…</p>
+      </main>
     );
   }
 
-  return (
-    <main className="dash-v2 salora-command">
-      <aside className="sidebar-v2">
-        <div>
-          <button
-            className="brand white brand-button"
-            onClick={() =>
-              changeView("overview")
-            }
-            aria-label="SALORA command center"
-          >
-            <i />
-            SALORA
-          </button>
+  if (!dashboard) {
+    return (
+      <main className="dashboard-shell dashboard-error">
+        <div className="error-panel">
+          <AlertTriangle size={28} />
 
-          <div className="side-label">
-            COMMAND CENTER
+          <div>
+            <h1>Dashboard unavailable</h1>
+            <p>{error || "Something went wrong while loading SALORA."}</p>
           </div>
 
-          <nav>
+          <button
+            type="button"
+            className="button button-primary"
+            onClick={() => {
+              setLoading(true);
+              void loadDashboard();
+            }}
+          >
+            <RefreshCw size={16} />
+            Retry
+          </button>
+        </div>
+      </main>
+    );
+  }
+
+  const activeDecision =
+    simulation?.decision ?? simulation?.recommendation ?? null;
+
+  const canAccept =
+    activeDecision?.state === "ACCEPT" ||
+    activeDecision?.state === "ACCEPT_WITH_WARNING";
+
+  const selectedOption =
+    simulation?.options?.find(
+      (option) => option.id === selectedOptionId,
+    ) ??
+    simulation?.selected_option ??
+    null;
+
+  const todayRevenue =
+    dashboard.metrics?.today_revenue ??
+    todayAppointments.reduce(
+      (total, appointment) => total + (appointment.price ?? 0),
+      0,
+    );
+
+  const completedToday =
+    dashboard.metrics?.completed_today ??
+    todayAppointments.filter(
+      (appointment) => appointment.status === "COMPLETED",
+    ).length;
+
+  const cancelledToday =
+    dashboard.metrics?.cancelled_today ??
+    todayAppointments.filter(
+      (appointment) => appointment.status === "CANCELLED",
+    ).length;
+
+  const noShowToday =
+    dashboard.metrics?.no_show_today ??
+    todayAppointments.filter(
+      (appointment) => appointment.status === "NO_SHOW",
+    ).length;
+
+  return (
+    <main className="dashboard-shell">
+      <header className="dashboard-header">
+        <div className="dashboard-brand">
+          <div className="brand-mark">
+            <Sparkles size={18} />
+          </div>
+
+          <div>
+            <span className="brand-name">SALORA</span>
+            <span className="brand-subtitle">
+              Walk-In Decision Intelligence
+            </span>
+          </div>
+        </div>
+
+        <div className="dashboard-header-actions">
+          <div
+            className={`connection-status ${
+              online ? "is-online" : "is-offline"
+            }`}
+          >
+            <span className="status-dot" />
+            {online ? "Live" : "Offline"}
+          </div>
+
+          <div className="dashboard-clock">
+            {currentTime.toLocaleTimeString("en-IN", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          </div>
+
+          <button
+            type="button"
+            className="icon-button"
+            title="Refresh dashboard"
+            onClick={() => {
+              setLoading(true);
+              void loadDashboard();
+            }}
+          >
+            <RefreshCw size={17} />
+          </button>
+
+          <button
+            type="button"
+            className="logout-button"
+            onClick={() => void logout()}
+            disabled={loggingOut}
+          >
+            <LogOut size={16} />
+            {loggingOut ? "Signing out…" : "Sign out"}
+          </button>
+        </div>
+      </header>
+
+      <div className="dashboard-layout">
+        <aside className="dashboard-sidebar">
+          <div className="salon-context">
+            <span className="eyebrow">ACTIVE SALON</span>
+            <strong>{dashboard.salon.name}</strong>
+
+            {dashboard.salon.timezone && (
+              <span>{dashboard.salon.timezone}</span>
+            )}
+          </div>
+
+          <nav className="dashboard-nav">
             <button
-              className={
-                activeView === "overview"
-                  ? "side-active"
-                  : ""
-              }
-              onClick={() =>
-                changeView("overview")
-              }
+              type="button"
+              className={activeView === "overview" ? "active" : ""}
+              onClick={() => setActiveView("overview")}
             >
-              <Activity />
-              <span>Overview</span>
+              <Activity size={17} />
+              Overview
             </button>
 
             <button
-              className={
-                activeView === "schedule"
-                  ? "side-active"
-                  : ""
-              }
-              onClick={() =>
-                changeView("schedule")
-              }
+              type="button"
+              className={activeView === "schedule" ? "active" : ""}
+              onClick={() => setActiveView("schedule")}
             >
-              <CalendarDays />
-              <span>Schedule</span>
+              <CalendarDays size={17} />
+              Schedule
             </button>
 
             <button
-              className={
-                activeView === "customers"
-                  ? "side-active"
-                  : ""
-              }
-              onClick={() =>
-                changeView("customers")
-              }
+              type="button"
+              className={activeView === "customers" ? "active" : ""}
+              onClick={() => setActiveView("customers")}
             >
-              <Users />
-              <span>Customers</span>
+              <Users size={17} />
+              Customers
             </button>
           </nav>
-        </div>
 
-        <div className="side-bottom">
-          <div className="engine-status">
-            <span className="status-dot" />
-
-            <div>
-              <small>
-                DECISION ENGINE
-              </small>
-
-              <b>Operational</b>
-            </div>
-          </div>
-
-          <button
-            className="side-signout"
-            onClick={logout}
-          >
-            <LogOut />
-            Sign out
-          </button>
-        </div>
-      </aside>
-
-      <section className="dash-main">
-        <header className="dash-header">
-          <div>
-            <div className="eyebrow">
-              <span className="live-pulse" />
-              TODAY · LIVE OPERATIONS
-            </div>
-
-            <h1>
-              {activeView === "overview"
-                ? "Know before you say yes."
-                : activeView === "schedule"
-                  ? "See the schedule clearly."
-                  : "Know your customers."}
-            </h1>
-
-            <p>
-              {d.salon.name} ·{" "}
-              {d.salon.timezone}
-            </p>
-          </div>
-
-          <div className="head-actions">
-            <span className="live-pill">
-              <span />
-              LIVE
-            </span>
-
-            <button
-              className="iconbtn"
-              onClick={load}
-              title="Refresh live salon state"
-              aria-label="Refresh live salon state"
-            >
-              <RefreshCw size={16} />
-            </button>
-          </div>
-        </header>
-
-        {error && (
-          <div
-            className="alert-v2"
-            role="alert"
-          >
-            <AlertTriangle size={16} />
-
-            <span>{error}</span>
-
-            <button
-              onClick={() =>
-                setError("")
-              }
-              aria-label="Dismiss error"
-            >
-              <X size={15} />
-            </button>
-          </div>
-        )}
-
-        {accepted && (
-          <div
-            className="success-v2"
-            role="status"
-          >
-            <CheckCircle2 size={16} />
-
-            <span>
-              Walk-in accepted and added
-              to the live schedule.
-            </span>
-
-            <button
-              onClick={() =>
-                setAccepted(false)
-              }
-            >
-              Dismiss
-            </button>
-          </div>
-        )}
-
-        {activeView === "overview" && (
-          <>
-            <section className="command-intelligence">
-              <div className="command-intro">
-                <span className="gold-kicker">
-                  <Sparkles size={13} />
-                  SALORA INTELLIGENCE
-                </span>
-
-                <h2>
-                  The salon,
-                  <br />
-                  at a glance.
-                </h2>
-
-                <p>
-                  Live operational signals
-                  built from your actual
-                  schedule.
-                </p>
+          <div className="sidebar-bottom">
+            <div className="sidebar-security">
+              <ShieldCheck size={17} />
+              <div>
+                <strong>Protected session</strong>
+                <span>Tenant-isolated workspace</span>
               </div>
+            </div>
+          </div>
+        </aside>
 
-              <div className="intelligence-signal">
-                <div
-                  className={`pressure-ring ${pressureClass}`}
-                >
-                  <strong>
-                    {actualUtilization}%
-                  </strong>
+        <section className="dashboard-content">
+          {error && (
+            <div className="dashboard-alert">
+              <AlertTriangle size={17} />
+              <span>{error}</span>
 
-                  <span>LOAD</span>
-                </div>
+              <button
+                type="button"
+                onClick={() => setError("")}
+                aria-label="Dismiss error"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          )}
 
+          {activeView === "overview" && (
+            <>
+              <section className="dashboard-intro">
                 <div>
-                  <small>
-                    SCHEDULE PRESSURE
-                  </small>
+                  <span className="eyebrow">TODAY&apos;S SALON INTELLIGENCE</span>
 
-                  <b>{pressureLabel}</b>
-
-                  <span>
-                    {availableMinutes.toLocaleString(
-                      "en-IN",
-                    )}{" "}
-                    min available
-                  </span>
-                </div>
-              </div>
-
-              <div className="command-signal-note">
-                <span>
-                  <Activity size={14} />
-                  ENGINE STATUS
-                </span>
-
-                <strong>
-                  Monitoring live capacity
-                </strong>
-
-                <small>
-                  Every simulation uses
-                  the current schedule.
-                </small>
-              </div>
-            </section>
-
-            <div className="kpis-v2 premium-kpis">
-              <K
-                icon={<CalendarDays />}
-                v={appointments.length}
-                t="Appointments today"
-                sub="Live schedule"
-              />
-
-              <K
-                icon={<Users />}
-                v={d.stylists.length}
-                t="Stylists active"
-                sub="Salon team"
-              />
-
-              <K
-                icon={<WalletCards />}
-                v={formatCurrency(
-                  acceptedWalkInRevenue,
-                )}
-                t="Walk-in revenue"
-                sub={
-                  acceptedWalkIns
-                    ? `${acceptedWalkIns} accepted today`
-                    : "No accepted walk-ins yet"
-                }
-              />
-
-              <K
-                icon={<Activity />}
-                v={`${actualUtilization}%`}
-                t="Schedule utilization"
-                sub={`${bookedMinutes} booked min`}
-              />
-            </div>
-
-            <section className="pulse-grid">
-              <PulseCard
-                icon={<Zap />}
-                label="AVAILABLE CAPACITY"
-                value={`${availableMinutes} min`}
-                description="Capacity still open in today's operating window."
-              />
-
-              <PulseCard
-                icon={<TrendingUp />}
-                label="CAPTURED TODAY"
-                value={formatCurrency(
-                  acceptedWalkInRevenue,
-                )}
-                description="Revenue from accepted walk-ins."
-              />
-
-              <PulseCard
-                icon={<AlertTriangle />}
-                label="NO-SHOWS"
-                value={noShows}
-                description={
-                  noShows
-                    ? "Released capacity may be recoverable."
-                    : "No no-shows recorded today."
-                }
-              />
-
-              <PulseCard
-                icon={<Clock3 />}
-                label="SIMULATIONS"
-                value={simulationCount}
-                description="Decision simulations run today."
-              />
-            </section>
-
-            <section
-              className={`whatif-theater ${
-                theaterActive
-                  ? "theater-live"
-                  : ""
-              }`}
-            >
-              <div className="theater-header-v3">
-                <div>
-                  <div className="theater-kicker">
-                    <span className="theater-live-dot" />
-                    WALK-IN DECISION ENGINE
-                  </div>
-
-                  <h2>
-                    What happens if you
-                    <em> say yes?</em>
-                  </h2>
+                  <h1>
+                    Run the day.
+                    <br />
+                    <span>Protect every appointment.</span>
+                  </h1>
 
                   <p>
-                    SALORA tests the request
-                    against the current schedule
-                    before anything changes.
+                    SALORA evaluates walk-ins against your live schedule before
+                    you commit to them.
                   </p>
                 </div>
 
-                <div className="simulation-state">
-                  <span
-                    className={
-                      busy
-                        ? "state-analyzing"
-                        : dec
-                          ? "state-result"
-                          : "state-ready"
-                    }
+                <div className="intro-action">
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    onClick={scrollToTheater}
                   >
-                    {busy
-                      ? "SIMULATING"
-                      : dec
-                        ? "DECISION READY"
-                        : "READY"}
-                  </span>
+                    <Zap size={17} />
+                    Simulate a walk-in
+                  </button>
                 </div>
-              </div>
+              </section>
 
-              <div className="theater-body-v3">
-                <div className="walkin-request-panel">
-                  <div className="request-heading">
-                    <div>
-                      <span>
-                        WALK-IN REQUEST
-                      </span>
-
-                      <b>
-                        Test a customer
-                        before committing
-                        the schedule.
-                      </b>
-                    </div>
-
-                    <Zap size={18} />
+              <section className="intelligence-strip">
+                <div className="intelligence-strip-main">
+                  <div className="intelligence-icon">
+                    <BrainIcon />
                   </div>
 
-                  <div className="request-fields">
-                    <label>
+                  <div>
+                    <span className="eyebrow">DECISION ENGINE</span>
+                    <strong>
+                      {activeDecision
+                        ? decisionHeadline(activeDecision.state)
+                        : "Ready for a what-if"}
+                    </strong>
+                    <p>
+                      {activeDecision
+                        ? statusDescription(activeDecision.state)
+                        : "Test a walk-in before it changes your schedule."}
+                    </p>
+                  </div>
+                </div>
+
+                <div className={`pressure-chip ${pressureClass}`}>
+                  <span className="status-dot" />
+                  Schedule pressure: {pressureLabel}
+                </div>
+              </section>
+
+              <section className="kpi-grid">
+                <K
+                  icon={<WalletCards size={18} />}
+                  label="Today revenue"
+                  value={formatCurrency(todayRevenue)}
+                  note="Booked + completed value"
+                  trend={<TrendingUp size={14} />}
+                />
+
+                <K
+                  icon={<CalendarDays size={18} />}
+                  label="Appointments"
+                  value={String(todayAppointments.length)}
+                  note={`${completedToday} completed today`}
+                  trend={<Activity size={14} />}
+                />
+
+                <K
+                  icon={<Users size={18} />}
+                  label="Active stylists"
+                  value={String(stylists.filter((stylist) => stylist.active).length)}
+                  note={`${capacityLabel} capacity`}
+                  trend={<Users size={14} />}
+                />
+
+                <K
+                  icon={<Timer size={18} />}
+                  label="Schedule pressure"
+                  value={pressureLabel}
+                  note={`${utilization}% current utilization`}
+                  trend={
+                    utilization >= 75 ? (
+                      <TrendingUp size={14} />
+                    ) : (
+                      <TrendingDown size={14} />
+                    )
+                  }
+                />
+              </section>
+
+              <section className="pulse-grid">
+                <PulseCard
+                  title="Recovery room"
+                  value={`${Math.max(0, 100 - utilization)}%`}
+                  description="Estimated open capacity"
+                  icon={<Activity size={17} />}
+                />
+
+                <PulseCard
+                  title="Cancellations"
+                  value={String(cancelledToday)}
+                  description="Today"
+                  icon={<X size={17} />}
+                />
+
+                <PulseCard
+                  title="No-shows"
+                  value={String(noShowToday)}
+                  description="Today"
+                  icon={<AlertTriangle size={17} />}
+                />
+
+                <PulseCard
+                  title="Decision mode"
+                  value="Live"
+                  description="Deterministic simulation"
+                  icon={<ShieldCheck size={17} />}
+                />
+              </section>
+
+              <section
+                className="what-if-theater"
+                ref={theaterRef}
+              >
+                <div className="theater-header">
+                  <div>
+                    <span className="eyebrow">WHAT-IF DECISION ENGINE</span>
+
+                    <h2>
+                      Know before
+                      <br />
+                      <span>you say yes.</span>
+                    </h2>
+
+                    <p>
+                      Enter a walk-in request. SALORA simulates the schedule
+                      impact before you accept it.
+                    </p>
+                  </div>
+
+                  <div className="theater-badge">
+                    <Sparkles size={15} />
+                    Predict → Recommend → Act
+                  </div>
+                </div>
+
+                <div className="request-panel">
+                  <div className="request-panel-heading">
+                    <div>
+                      <span className="eyebrow">WALK-IN REQUEST</span>
+                      <h3>What does the customer need?</h3>
+                    </div>
+
+                    <span className="keyboard-hint">
+                      Press <kbd>/</kbd>
+                    </span>
+                  </div>
+
+                  <div className="request-grid">
+                    <label className="field">
                       <span>Customer</span>
 
-                      <div className="input-shell">
-                        <UserRound size={15} />
+                      <div className="field-input-wrap">
+                        <UserRound size={16} />
 
                         <input
+                          type="text"
                           value={customerName}
                           onChange={(event) =>
-                            setCustomerName(
-                              event.target.value,
-                            )
+                            setCustomerName(event.target.value)
                           }
-                          placeholder="Optional customer name"
-                          disabled={busy}
+                          placeholder="Walk-in customer"
                         />
                       </div>
                     </label>
 
-                    <label>
+                    <label className="field">
                       <span>Service</span>
 
-                      <div className="input-shell">
-                        <CalendarDays size={15} />
+                      <div className="field-input-wrap">
+                        <CalendarDays size={16} />
 
                         <select
-                          value={svc}
-                          onChange={(event) => {
-                            setSvc(
-                              event.target.value,
-                            );
-
-                            setDec(null);
-                            setCandidates([]);
-                            setTheaterActive(false);
-                            setShowAlternatives(false);
-                          }}
-                          disabled={busy}
+                          ref={serviceInputRef}
+                          value={serviceId}
+                          onChange={(event) =>
+                            setServiceId(event.target.value)
+                          }
                         >
-                          <option value="">
-                            Choose a service…
-                          </option>
-
-                          {d.services.map(
-                            (service) => (
-                              <option
-                                key={service.id}
-                                value={service.id}
-                              >
-                                {service.name} ·{" "}
-                                {
-                                  service.duration_min
-                                }{" "}
-                                min ·{" "}
-                                {formatCurrency(
-                                  Number(
-                                    service.price_inr,
-                                  ),
-                                )}
-                              </option>
-                            ),
-                          )}
+                          {dashboard.services.map((service) => (
+                            <option
+                              key={service.id}
+                              value={service.id}
+                            >
+                              {service.name} · {service.duration_minutes} min ·{" "}
+                              {formatCurrency(service.price)}
+                            </option>
+                          ))}
                         </select>
 
                         <ChevronDown size={15} />
                       </div>
                     </label>
+
+                    <button
+                      type="button"
+                      className="simulate-button"
+                      onClick={() => void simulateWalkIn()}
+                      disabled={simulating || !selectedService}
+                    >
+                      {simulating ? (
+                        <>
+                          <span className="button-spinner" />
+                          Simulating…
+                        </>
+                      ) : (
+                        <>
+                          <Zap size={17} />
+                          Simulate
+                        </>
+                      )}
+                    </button>
                   </div>
 
-                  {selected && (
-                    <div className="service-intelligence">
-                      <div>
-                        <Clock3 size={13} />
-
+                  {simulating && (
+                    <div className="analysis-progress">
+                      <div className="analysis-progress-top">
                         <span>
-                          {selected.duration_min} min
+                          {simulationStages[simulationStage]}
                         </span>
-                      </div>
-
-                      <div>
-                        <WalletCards size={13} />
 
                         <span>
-                          {formatCurrency(
-                            Number(
-                              selected.price_inr,
+                          {Math.min(
+                            100,
+                            Math.round(
+                              ((simulationStage + 1) /
+                                simulationStages.length) *
+                                100,
                             ),
                           )}
+                          %
                         </span>
                       </div>
 
-                      <div>
-                        <ShieldCheck size={13} />
+                      <div className="analysis-progress-bar">
+                        <span
+                          style={{
+                            width: `${
+                              ((simulationStage + 1) /
+                                simulationStages.length) *
+                              100
+                            }%`,
+                          }}
+                        />
+                      </div>
 
-                        <span>
-                          {selected.buffer_min} min
-                          buffer
+                      <div className="analysis-stages">
+                        {simulationStages.map((stage, index) => (
+                          <div
+                            key={stage}
+                            className={
+                              index <= simulationStage ? "done" : ""
+                            }
+                          >
+                            <span>{index + 1}</span>
+                            {stage}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="theater-divider">
+                  <span>LIVE SCHEDULE IMPACT</span>
+                </div>
+
+                <div className="schedule-theater">
+                  <div className="timeline-axis">
+                    {timelineMarks.map((mark) => (
+                      <span key={mark.toISOString()}>
+                        {mark.toLocaleTimeString("en-IN", {
+                          hour: "numeric",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    ))}
+                  </div>
+
+                  {stylists.map((stylist) => {
+                    const stylistAppointments = appointments.filter(
+                      (appointment) => {
+                        return (
+                          appointment.stylist_name === stylist.name ||
+                          appointment.stylist_name === stylist.id
+                        );
+                      },
+                    );
+
+                    return (
+                      <div
+                        className="stylist-timeline-row"
+                        key={stylist.id}
+                      >
+                        <div className="stylist-label">
+                          <span className="stylist-avatar">
+                            {stylist.name.charAt(0).toUpperCase()}
+                          </span>
+
+                          <div>
+                            <strong>{stylist.name}</strong>
+                            <span>
+                              {stylist.active ? "Available" : "Inactive"}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="timeline-track">
+                          {timelineMarks.map((mark) => (
+                            <span
+                              className="timeline-grid-line"
+                              style={{
+                                left: `${timelinePosition(
+                                  mark.toISOString(),
+                                )}%`,
+                              }}
+                              key={mark.toISOString()}
+                            />
+                          ))}
+
+                          {stylistAppointments.map((appointment) => (
+                            <div
+                              className="booked-block"
+                              key={appointment.id}
+                              style={{
+                                left: `${timelinePosition(
+                                  appointment.scheduled_start,
+                                )}%`,
+                                width: `${timelineWidth(
+                                  appointment.scheduled_start,
+                                  appointment.scheduled_end,
+                                )}%`,
+                              }}
+                              title={`${appointment.customer_name ?? "Customer"} · ${
+                                appointment.service_name ?? "Appointment"
+                              }`}
+                            >
+                              <span>
+                                {appointment.customer_name ?? "Customer"}
+                              </span>
+
+                              <small>
+                                {appointment.service_name ?? "Appointment"}
+                              </small>
+                            </div>
+                          ))}
+
+                          {selectedOption?.stylist_id === stylist.id &&
+                            selectedOption.start &&
+                            selectedOption.end && (
+                              <div
+                                className="walk-in-block"
+                                style={{
+                                  left: `${timelinePosition(
+                                    selectedOption.start,
+                                  )}%`,
+                                  width: `${timelineWidth(
+                                    selectedOption.start,
+                                    selectedOption.end,
+                                  )}%`,
+                                }}
+                              >
+                                <Sparkles size={12} />
+                                <span>WALK-IN</span>
+                              </div>
+                            )}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {!stylists.length && (
+                    <div className="empty-state">
+                      <Users size={22} />
+                      <span>No stylist schedule available.</span>
+                    </div>
+                  )}
+                </div>
+
+                {simulation && activeDecision && (
+                  <div className="decision-result">
+                    <div
+                      className={`decision-orb ${decisionTone(
+                        activeDecision.state,
+                      )}`}
+                    >
+                      {activeDecision.state === "ACCEPT" ? (
+                        <CheckCircle2 size={27} />
+                      ) : activeDecision.state ===
+                        "ACCEPT_WITH_WARNING" ? (
+                        <AlertTriangle size={27} />
+                      ) : activeDecision.state === "WAIT" ? (
+                        <Clock3 size={27} />
+                      ) : (
+                        <X size={27} />
+                      )}
+                    </div>
+
+                    <div className="decision-copy">
+                      <span className="eyebrow">RECOMMENDATION</span>
+
+                      <h3>
+                        {decisionHeadline(activeDecision.state)}
+                      </h3>
+
+                      <p>
+                        {activeDecision.message ||
+                          activeDecision.explanation ||
+                          statusDescription(activeDecision.state)}
+                      </p>
+                    </div>
+
+                    <div
+                      className={`decision-state ${stateClass(
+                        activeDecision.state,
+                      )}`}
+                    >
+                      {stateLabel(activeDecision.state)}
+                    </div>
+                  </div>
+                )}
+
+                {simulation && selectedOption && (
+                  <div className="impact-metrics">
+                    <ImpactMetric
+                      label="Revenue"
+                      value={formatCurrency(
+                        selectedOption.revenue ??
+                          selectedService?.price ??
+                          0,
+                      )}
+                      icon={<WalletCards size={16} />}
+                    />
+
+                    <ImpactMetric
+                      label="Total delay"
+                      value={`${selectedOption.total_delay ?? 0} min`}
+                      icon={<Timer size={16} />}
+                    />
+
+                    <ImpactMetric
+                      label="Maximum delay"
+                      value={`${selectedOption.max_delay ?? 0} min`}
+                      icon={<Clock3 size={16} />}
+                    />
+
+                    <ImpactMetric
+                      label="Affected"
+                      value={`${selectedOption.affected_appointments ?? 0}`}
+                      icon={<Users size={16} />}
+                    />
+
+                    <ImpactMetric
+                      label="Customer wait"
+                      value={`${selectedOption.customer_wait ?? 0} min`}
+                      icon={<UserRound size={16} />}
+                    />
+                  </div>
+                )}
+
+                {simulation?.options &&
+                  simulation.options.length > 0 && (
+                    <div className="alternatives-section">
+                      <div className="section-heading-row">
+                        <div>
+                          <span className="eyebrow">
+                            ALTERNATIVES
+                          </span>
+                          <h3>Other safe possibilities</h3>
+                        </div>
+
+                        <span className="muted-count">
+                          {simulation.options.length} options
                         </span>
+                      </div>
+
+                      <div className="alternatives-list">
+                        {simulation.options.map((option, index) => {
+                          const optionDecision =
+                            option.decision ?? activeDecision?.state;
+
+                          const isSelected =
+                            option.id === selectedOptionId ||
+                            (!selectedOptionId && index === 0);
+
+                          return (
+                            <button
+                              type="button"
+                              className={`alternative-row ${
+                                isSelected ? "selected" : ""
+                              }`}
+                              key={option.id ?? `${option.start}-${index}`}
+                              onClick={() => {
+                                if (option.id) {
+                                  setSelectedOptionId(option.id);
+                                }
+                              }}
+                            >
+                              <div className="alternative-index">
+                                {index + 1}
+                              </div>
+
+                              <div className="alternative-main">
+                                <strong>
+                                  {option.stylist_name ||
+                                    stylists.find(
+                                      (stylist) =>
+                                        stylist.id ===
+                                        option.stylist_id,
+                                    )?.name ||
+                                    "Available stylist"}
+                                </strong>
+
+                                <span>
+                                  {option.start
+                                    ? formatTime(option.start)
+                                    : "Flexible time"}
+                                  {option.end
+                                    ? ` → ${formatTime(option.end)}`
+                                    : ""}
+                                </span>
+                              </div>
+
+                              <div className="alternative-impact">
+                                <span>
+                                  {formatCurrency(option.revenue ?? 0)}
+                                </span>
+
+                                <small>
+                                  {option.total_delay ?? 0} min delay
+                                </small>
+                              </div>
+
+                              <div
+                                className={`alternative-state ${
+                                  optionDecision
+                                    ? stateClass(optionDecision)
+                                    : ""
+                                }`}
+                              >
+                                {optionDecision
+                                  ? stateLabel(optionDecision)
+                                  : "Review"}
+                              </div>
+
+                              <ChevronRight size={17} />
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
 
-                  <div className="request-actions">
+                {simulation && recommendedStylist && (
+                  <div className="capacity-panel">
+                    <div className="capacity-panel-copy">
+                      <span className="eyebrow">
+                        RECOMMENDED CAPACITY
+                      </span>
+
+                      <h3>{recommendedStylist.name}</h3>
+
+                      <p>
+                        SALORA selected this placement because it offers
+                        the strongest safe outcome for the current schedule.
+                      </p>
+                    </div>
+
+                    <div className="capacity-meter">
+                      <div className="capacity-meter-top">
+                        <span>Current utilization</span>
+                        <strong>{utilization}%</strong>
+                      </div>
+
+                      <div className="capacity-meter-track">
+                        <span
+                          style={{
+                            width: `${utilization}%`,
+                          }}
+                        />
+                      </div>
+
+                      <div className="capacity-meter-footer">
+                        <span>Open</span>
+                        <span>Balanced</span>
+                        <span>High</span>
+                        <span>Critical</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {simulation && canAccept && (
+                  <div className="decision-actions">
                     <button
-                      className="theater-simulate"
-                      disabled={!svc || busy}
-                      onClick={simulate}
+                      type="button"
+                      className="button button-primary accept-button"
+                      onClick={() => void acceptWalkIn()}
+                      disabled={accepting}
                     >
-                      {busy ? (
+                      {accepting ? (
                         <>
-                          <span className="btn-spinner" />
-                          Running live
-                          simulation…
+                          <span className="button-spinner" />
+                          Accepting…
                         </>
                       ) : (
                         <>
-                          Simulate this
-                          walk-in
-                          <Sparkles size={15} />
+                          <CheckCircle2 size={17} />
+                          Accept walk-in
                         </>
                       )}
                     </button>
 
-                    {(dec || svc) &&
-                      !busy && (
-                        <button
-                          className="secondary-action"
-                          onClick={
-                            resetSimulation
-                          }
-                        >
-                          Reset
-                        </button>
-                      )}
-                  </div>
-
-                  <div className="request-principle">
-                    <ShieldCheck size={13} />
-
-                    <span>
-                      Simulation only · your
-                      schedule changes only
-                      after acceptance.
-                    </span>
-                  </div>
-                </div>
-
-                {busy && (
-                  <div className="theater-analysis">
-                    <div className="analysis-top">
-                      <span>
-                        SALORA IS THINKING
-                      </span>
-
-                      <b>
-                        {Math.min(
-                          100,
-                          stage * 25 + 25,
-                        )}
-                        %
-                      </b>
-                    </div>
-
-                    <div className="analysis-progress">
-                      <i
-                        style={{
-                          width: `${Math.min(
-                            100,
-                            stage * 25 + 25,
-                          )}%`,
-                        }}
-                      />
-                    </div>
-
-                    <div className="analysis-stages">
-                      {[
-                        "Reading live schedule",
-                        "Testing safe placements",
-                        "Propagating downstream impact",
-                        "Ranking opportunities",
-                        "Building explanation",
-                      ].map(
-                        (item, index) => (
-                          <span
-                            className={
-                              index <= stage
-                                ? "active"
-                                : ""
-                            }
-                            key={item}
-                          >
-                            {index <= stage
-                              ? "✓"
-                              : "○"}{" "}
-                            {item}
-                          </span>
-                        ),
-                      )}
-                    </div>
+                    <button
+                      type="button"
+                      className="button button-secondary"
+                      onClick={resetDecision}
+                    >
+                      Start over
+                    </button>
                   </div>
                 )}
 
-                <div className="timeline-theater">
-                  <div className="timeline-top">
-                    <div className="timeline-title">
-                      <span>
-                        WHAT-IF TIMELINE
-                      </span>
+                {simulation &&
+                  !canAccept &&
+                  activeDecision && (
+                    <div className="decision-protection">
+                      <ShieldCheck size={19} />
 
-                      <small>
-                        {dec
-                          ? "SIMULATED PLACEMENT"
-                          : "CURRENT SCHEDULE"}
-                      </small>
-                    </div>
-
-                    <div className="timeline-legend">
-                      <span>
-                        <i className="legend-booked" />
-                        Booked
-                      </span>
-
-                      <span>
-                        <i className="legend-walkin" />
-                        What-if
-                      </span>
-
-                      <span>
-                        <i className="legend-open" />
-                        Open
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="timeline-axis">
-                    <div />
-
-                    <div className="axis-track">
-                      {timeMarks.map(
-                        (time) => {
-                          const left =
-                            ((time -
-                              timelineBounds.start) /
-                              (timelineBounds.end -
-                                timelineBounds.start)) *
-                            100;
-
-                          return (
-                            <span
-                              key={time}
-                              style={{
-                                left: `${left}%`,
-                              }}
-                            >
-                              {new Date(
-                                time,
-                              ).toLocaleTimeString(
-                                [],
-                                {
-                                  hour: "numeric",
-                                  minute: "2-digit",
-                                },
-                              )}
-                            </span>
-                          );
-                        },
-                      )}
-                    </div>
-                  </div>
-
-                  {stylistRows.length ===
-                  0 ? (
-                    <div className="timeline-empty">
-                      No stylist schedule
-                      available.
-                    </div>
-                  ) : (
-                    stylistRows.map(
-                      (row) => (
-                        <div
-                          className="timeline-row"
-                          key={row.id}
-                        >
-                          <div className="stylist-label">
-                            <span>
-                              {row.name}
-                            </span>
-
-                            <small>
-                              {
-                                row
-                                  .appointments
-                                  .length
-                              }{" "}
-                              booked
-                            </small>
-                          </div>
-
-                          <div className="timeline-track">
-                            {timeMarks.map(
-                              (time) => {
-                                const left =
-                                  ((time -
-                                    timelineBounds.start) /
-                                    (timelineBounds.end -
-                                      timelineBounds.start)) *
-                                  100;
-
-                                return (
-                                  <i
-                                    className="grid-line"
-                                    key={time}
-                                    style={{
-                                      left: `${left}%`,
-                                    }}
-                                  />
-                                );
-                              },
-                            )}
-
-                            {row.appointments.map(
-                              (
-                                appointment,
-                              ) => {
-                                const position =
-                                  timelinePosition(
-                                    appointment.scheduled_start,
-                                    appointment.scheduled_end,
-                                  );
-
-                                return (
-                                  <div
-                                    className="timeline-block booked-block"
-                                    key={
-                                      appointment.id
-                                    }
-                                    style={
-                                      position
-                                    }
-                                  >
-                                    <b>
-                                      {
-                                        appointment.service
-                                      }
-                                    </b>
-
-                                    <small>
-                                      {appointment.customer ||
-                                        "Booked customer"}
-                                    </small>
-
-                                    <em>
-                                      {formatTime(
-                                        appointment.scheduled_start,
-                                      )}
-                                    </em>
-                                  </div>
-                                );
-                              },
-                            )}
-
-                            {dec &&
-                              dec.stylistId ===
-                                row.id && (
-                                <div
-                                  className={`timeline-block walkin-block ${
-                                    theaterActive
-                                      ? "walkin-enter"
-                                      : ""
-                                  }`}
-                                  style={timelinePosition(
-                                    dec.start,
-                                    dec.end,
-                                  )}
-                                >
-                                  <div className="walkin-glow" />
-
-                                  <b>
-                                    WALK-IN
-                                  </b>
-
-                                  <small>
-                                    {selected?.name ||
-                                      "Simulation"}
-                                  </small>
-
-                                  <em>
-                                    {formatTime(
-                                      dec.start,
-                                    )}
-                                  </em>
-                                </div>
-                              )}
-
-                            {!dec && (
-                              <div className="capacity-window">
-                                OPEN CAPACITY
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      ),
-                    )
-                  )}
-                </div>
-
-                {dec && !busy && (
-                  <div
-                    className={`theater-impact decision-${stateClass(
-                      dec.state,
-                    )}`}
-                  >
-                    <div className="impact-header-v3">
-                      <div className="impact-decision">
-                        <div className="impact-icon">
-                          {statusIcon(
-                            dec.state,
-                          )}
-                        </div>
-
-                        <div>
-                          <small>
-                            SALORA RECOMMENDS
-                          </small>
-
-                          <strong>
-                            {stateLabel(
-                              dec.state,
-                            )}
-                          </strong>
-
-                          <p>
-                            {dec.reason}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="recommendation-time">
-                        <small>
-                          RECOMMENDED START
-                        </small>
-
+                      <div>
                         <strong>
-                          {formatTime(
-                            dec.start,
-                          )}
+                          Protect the booked schedule
                         </strong>
 
-                        <span>
-                          {recommendedStylist
-                            ?.name ??
-                            "Recommended stylist"}
-                        </span>
+                        <p>
+                          SALORA recommends keeping this request outside
+                          the current acceptance path.
+                        </p>
                       </div>
-                    </div>
-
-                    <div className="decision-summary">
-                      <span>
-                        {statusDescription(
-                          dec.state,
-                        )}
-                      </span>
-
-                      <span className="decision-confidence">
-                        <ShieldCheck size={13} />
-                        Constraint checked
-                      </span>
-                    </div>
-
-                    <div className="impact-grid-v3">
-                      <ImpactMetric
-                        value={formatCurrency(
-                          dec.revenue,
-                        )}
-                        label="Service value"
-                        positive
-                      />
-
-                      <ImpactMetric
-                        value={`${Math.round(
-                          dec.wait,
-                        )} min`}
-                        label="Customer wait"
-                      />
-
-                      <ImpactMetric
-                        value={`${Math.round(
-                          dec.maxDelay,
-                        )} min`}
-                        label="Maximum delay"
-                        warning={
-                          dec.maxDelay > 0
-                        }
-                      />
-
-                      <ImpactMetric
-                        value={`${dec.affected}`}
-                        label="Appointments affected"
-                        warning={
-                          dec.affected > 0
-                        }
-                      />
-                    </div>
-
-                    <div className="impact-explanation">
-                      <Zap size={14} />
-
-                      <span>
-                        {dec.affected ===
-                        0
-                          ? "This placement fits without affecting the visible schedule."
-                          : `This placement affects ${dec.affected} appointment${
-                              dec.affected ===
-                              1
-                                ? ""
-                                : "s"
-                            } and creates ${Math.round(
-                              dec.totalDelay,
-                            )} minutes of downstream delay.`}
-                      </span>
-                    </div>
-
-                    <div className="decision-actions">
-                      {dec.state !==
-                        "RESCHEDULE" && (
-                        <button
-                          className="theater-accept"
-                          disabled={busy}
-                          onClick={accept}
-                        >
-                          <CheckCircle2
-                            size={16}
-                          />
-                          Accept this
-                          walk-in
-                          <ChevronRight
-                            size={16}
-                          />
-                        </button>
-                      )}
 
                       <button
-                        className="secondary-action"
-                        onClick={() =>
-                          setShowAlternatives(
-                            (value) =>
-                              !value,
-                          )
-                        }
+                        type="button"
+                        className="button button-secondary"
+                        onClick={resetDecision}
                       >
-                        {showAlternatives
-                          ? "Hide alternatives"
-                          : "Compare alternatives"}
-
-                        <ChevronDown
-                          size={15}
-                          className={
-                            showAlternatives
-                              ? "rotate-180"
-                              : ""
-                          }
-                        />
+                        Try another request
                       </button>
                     </div>
+                  )}
+              </section>
+
+              <section className="decision-loop-section">
+                <div className="section-heading">
+                  <span className="eyebrow">THE SALORA LOOP</span>
+
+                  <h2>
+                    One decision.
+                    <br />
+                    <span>Three intelligent steps.</span>
+                  </h2>
+                </div>
+
+                <div className="decision-loop">
+                  <LoopStep
+                    number="01"
+                    icon={<Activity size={19} />}
+                    title="Predict"
+                    description="Model the request against the salon's current state."
+                  />
+
+                  <LoopConnector />
+
+                  <LoopStep
+                    number="02"
+                    icon={<Sparkles size={19} />}
+                    title="Recommend"
+                    description="Rank feasible placements by revenue and schedule impact."
+                  />
+
+                  <LoopConnector />
+
+                  <LoopStep
+                    number="03"
+                    icon={<CheckCircle2 size={19} />}
+                    title="Act"
+                    description="Accept only after the selected outcome is revalidated."
+                  />
+                </div>
+              </section>
+
+              <section className="history-section">
+                <div className="section-heading-row">
+                  <div>
+                    <span className="eyebrow">RECENT DECISIONS</span>
+                    <h2>Decision history</h2>
                   </div>
-                )}
 
-                {showAlternatives &&
-                  candidates.length >
-                    1 && (
-                    <div className="theater-alternatives">
-                      <div className="alternatives-heading">
-                        <div>
-                          <span>
-                            OTHER SIMULATED
-                            PLACEMENTS
-                          </span>
+                  <span className="muted-count">
+                    {history.length} saved locally
+                  </span>
+                </div>
 
-                          <small>
-                            REAL ENGINE OPTIONS
-                          </small>
+                {history.length ? (
+                  <div className="history-list">
+                    {history.slice(0, 6).map((item) => (
+                      <div className="history-row" key={item.id}>
+                        <div className="history-icon">
+                          <History size={16} />
                         </div>
 
-                        <Sparkles size={16} />
-                      </div>
+                        <div className="history-main">
+                          <strong>{item.customerName}</strong>
 
-                      <div className="alternative-grid">
-                        {candidates
-                          .slice(1, 5)
-                          .map(
-                            (
-                              candidate,
-                              index,
-                            ) => (
-                              <div
-                                className={`theater-alt alt-${stateClass(
-                                  candidate.state,
-                                )}`}
-                                key={`${candidate.stylistId}-${candidate.start}-${index}`}
-                              >
-                                <span>
-                                  {
-                                    stateLabel(
-                                      candidate.state,
-                                    )
-                                  }
-                                </span>
+                          <span>
+                            {item.serviceName} ·{" "}
+                            {formatDateTime(item.createdAt)}
+                          </span>
+                        </div>
 
-                                <b>
-                                  {formatTime(
-                                    candidate.start,
-                                  )}
-                                </b>
+                        <div className="history-value">
+                          {formatCurrency(item.price)}
+                        </div>
 
-                                <small>
-                                  {Math.round(
-                                    candidate.wait,
-                                  )}{" "}
-                                  min wait
-                                </small>
-
-                                <em>
-                                  {Math.round(
-                                    candidate.maxDelay,
-                                  )}{" "}
-                                  min delay
-                                </em>
-                              </div>
-                            ),
-                          )}
-                      </div>
-                    </div>
-                  )}
-              </div>
-            </section>
-
-            <section className="operations-grid">
-              <div className="operations-card">
-                <div className="operations-card-header">
-                  <div>
-                    <span>
-                      LIVE CAPACITY
-                    </span>
-
-                    <h3>
-                      Where the day stands.
-                    </h3>
-                  </div>
-
-                  <Activity size={18} />
-                </div>
-
-                <div className="capacity-meter">
-                  <div className="capacity-meter-top">
-                    <b>
-                      {actualUtilization}%
-                    </b>
-
-                    <span>
-                      schedule utilization
-                    </span>
-                  </div>
-
-                  <div className="capacity-track">
-                    <i
-                      style={{
-                        width: `${actualUtilization}%`,
-                      }}
-                    />
-                  </div>
-
-                  <div className="capacity-footer">
-                    <span>
-                      {bookedMinutes} booked
-                      minutes
-                    </span>
-
-                    <span>
-                      {availableMinutes} available
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="operations-card">
-                <div className="operations-card-header">
-                  <div>
-                    <span>
-                      RECOVERY SIGNAL
-                    </span>
-
-                    <h3>
-                      Released capacity.
-                    </h3>
-                  </div>
-
-                  <TrendingUp size={18} />
-                </div>
-
-                <div className="recovery-content">
-                  <div className="recovery-number">
-                    {noShows}
-                  </div>
-
-                  <div>
-                    <b>
-                      {noShows
-                        ? "No-show capacity detected"
-                        : "No recovery event yet"}
-                    </b>
-
-                    <p>
-                      {noShows
-                        ? "Run a walk-in simulation to test whether the released slot can be safely recovered."
-                        : "When a customer does not arrive, SALORA can use the released capacity for a new decision."}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <section className="history-panel">
-              <button
-                className="history-header"
-                onClick={() =>
-                  setShowHistory(
-                    (value) =>
-                      !value,
-                  )
-                }
-              >
-                <div>
-                  <History size={17} />
-
-                  <div>
-                    <span>
-                      SESSION DECISION
-                      HISTORY
-                    </span>
-
-                    <small>
-                      {history.length
-                        ? `${history.length} decision${
-                            history.length ===
-                            1
-                              ? ""
-                              : "s"
-                          } recorded`
-                        : "No decisions recorded in this session"}
-                    </small>
-                  </div>
-                </div>
-
-                <ChevronDown
-                  size={16}
-                  className={
-                    showHistory
-                      ? "rotate-180"
-                      : ""
-                  }
-                />
-              </button>
-
-              {showHistory && (
-                <div className="history-list">
-                  {history.length ===
-                  0 ? (
-                    <div className="history-empty">
-                      <History size={18} />
-
-                      <span>
-                        Accepted walk-ins
-                        from this
-                        session will
-                        appear here.
-                      </span>
-                    </div>
-                  ) : (
-                    history.map(
-                      (item) => (
                         <div
-                          className="history-row"
-                          key={item.id}
+                          className={`history-state ${stateClass(
+                            item.decision,
+                          )}`}
                         >
-                          <div
-                            className={`history-state history-${stateClass(
-                              item.state,
-                            )}`}
-                          >
-                            {statusIcon(
-                              item.state,
-                            )}
+                          {stateLabel(item.decision)}
+                        </div>
+
+                        <span className="history-delay">
+                          {item.delay} min impact
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="empty-state history-empty">
+                    <History size={22} />
+                    <span>
+                      Your completed walk-in decisions will appear here.
+                    </span>
+                  </div>
+                )}
+              </section>
+
+              <section className="bottom-pulse">
+                <div>
+                  <span className="eyebrow">SALON PULSE</span>
+
+                  <h3>
+                    {utilization < 50
+                      ? "You have room to capture more demand."
+                      : utilization < 75
+                        ? "Your schedule is balanced."
+                        : utilization < 90
+                          ? "Demand is approaching capacity."
+                          : "Protect your remaining appointment capacity."}
+                  </h3>
+                </div>
+
+                <div className="pulse-value">
+                  <strong>{utilization}%</strong>
+                  <span>utilized</span>
+                </div>
+              </section>
+            </>
+          )}
+
+          {activeView === "schedule" && (
+            <section className="view-section">
+              <div className="view-heading">
+                <div>
+                  <span className="eyebrow">TODAY</span>
+
+                  <h1>Schedule</h1>
+
+                  <p>
+                    Your current appointment timeline and operational state.
+                  </p>
+                </div>
+
+                <div className="view-heading-meta">
+                  <CalendarDays size={17} />
+                  {todayAppointments.length} appointments
+                </div>
+              </div>
+
+              <div className="schedule-card">
+                <div className="schedule-card-header">
+                  <div>
+                    <span className="eyebrow">LIVE TIMELINE</span>
+                    <h2>Today&apos;s appointments</h2>
+                  </div>
+
+                  <div className="schedule-legend">
+                    <span>
+                      <i className="legend-dot booked" />
+                      Booked
+                    </span>
+
+                    <span>
+                      <i className="legend-dot walkin" />
+                      Walk-in
+                    </span>
+                  </div>
+                </div>
+
+                {todayAppointments.length ? (
+                  <div className="appointment-list">
+                    {todayAppointments
+                      .sort(
+                        (a, b) =>
+                          new Date(a.scheduled_start).getTime() -
+                          new Date(b.scheduled_start).getTime(),
+                      )
+                      .map((appointment) => (
+                        <div
+                          className="appointment-row"
+                          key={appointment.id}
+                        >
+                          <div className="appointment-time">
+                            <strong>
+                              {formatTime(appointment.scheduled_start)}
+                            </strong>
 
                             <span>
-                              {stateLabel(
-                                item.state,
-                              )}
+                              {formatTime(appointment.scheduled_end)}
                             </span>
                           </div>
 
-                          <div className="history-service">
-                            <b>
-                              {
-                                item.service
-                              }
-                            </b>
+                          <div className="appointment-service">
+                            <strong>
+                              {appointment.service_name ||
+                                "Appointment"}
+                            </strong>
 
-                            <small>
-                              {
-                                item.stylist
-                              }{" "}
-                              ·{" "}
-                              {formatTime(
-                                item.start,
-                              )}
-                            </small>
+                            <span>
+                              {appointment.customer_name ||
+                                "Customer"}
+                            </span>
                           </div>
 
-                          <strong>
-                            {formatCurrency(
-                              item.revenue,
-                            )}
-                          </strong>
+                          <div className="appointment-stylist">
+                            <UserRound size={14} />
+                            {appointment.stylist_name || "Unassigned"}
+                          </div>
+
+                          <div
+                            className={`appointment-status status-${appointment.status.toLowerCase()}`}
+                          >
+                            {statusIcon(appointment.status)}
+                            {appointment.status.replace("_", " ")}
+                          </div>
+
+                          {typeof appointment.price === "number" && (
+                            <div className="appointment-price">
+                              {formatCurrency(appointment.price)}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                  </div>
+                ) : (
+                  <div className="empty-state">
+                    <CalendarDays size={24} />
+                    <span>No appointments scheduled today.</span>
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
+
+          {activeView === "customers" && (
+            <section className="view-section">
+              <div className="view-heading">
+                <div>
+                  <span className="eyebrow">CUSTOMER BASE</span>
+
+                  <h1>Customers</h1>
+
+                  <p>
+                    Quickly find customers while handling walk-in demand.
+                  </p>
+                </div>
+
+                <div className="view-heading-meta">
+                  <Users size={17} />
+                  {customers.length} customers
+                </div>
+              </div>
+
+              <div className="customer-search-panel">
+                <div className="field">
+                  <span>Search customers</span>
+
+                  <div className="field-input-wrap">
+                    <UserRound size={16} />
+
+                    <input
+                      type="text"
+                      value={customerName}
+                      onChange={(event) =>
+                        setCustomerName(event.target.value)
+                      }
+                      placeholder="Search by name, phone or email"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="customer-list-card">
+                {customersLoading ? (
+                  <div className="empty-state">
+                    <span className="button-spinner" />
+                    <span>Loading customers…</span>
+                  </div>
+                ) : filteredCustomers.length ? (
+                  <div className="customer-list">
+                    {filteredCustomers.map((customer) => (
+                      <div
+                        className="customer-row"
+                        key={customer.id}
+                      >
+                        <div className="customer-avatar">
+                          {customer.name.charAt(0).toUpperCase()}
+                        </div>
+
+                        <div className="customer-main">
+                          <strong>{customer.name}</strong>
 
                           <span>
-                            {item.delay
-                              ? `${Math.round(
-                                  item.delay,
-                                )}m delay`
-                              : "No delay"}
+                            {customer.phone ||
+                              customer.email ||
+                              "No contact details"}
                           </span>
                         </div>
-                      ),
-                    )
-                  )}
-                </div>
-              )}
+
+                        <button
+                          type="button"
+                          className="customer-use-button"
+                          onClick={() => {
+                            setCustomerName(customer.name);
+                            setActiveView("overview");
+                            window.setTimeout(
+                              () => serviceInputRef.current?.focus(),
+                              100,
+                            );
+                          }}
+                        >
+                          Use for simulation
+                          <ChevronRight size={15} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="empty-state">
+                    <Users size={24} />
+                    <span>No customers match this search.</span>
+                  </div>
+                )}
+              </div>
             </section>
-
-            <div className="bottom-strip">
-              <div>
-                <span>
-                  <Zap size={13} />
-                  SALORA PULSE
-                </span>
-
-                <b>
-                  Real-time capacity
-                  intelligence
-                </b>
-              </div>
-
-              <div className="pulse-bar">
-                <i
-                  style={{
-                    width: `${Math.max(
-                      4,
-                      actualUtilization,
-                    )}%`,
-                  }}
-                />
-              </div>
-
-              <span>
-                {pressureLabel}
-              </span>
-            </div>
-          </>
-        )}
-
-        {activeView === "schedule" && (
-          <section className="secondary-view">
-            <div className="secondary-view-header">
-              <div>
-                <span>
-                  LIVE SCHEDULE
-                </span>
-
-                <h2>
-                  Today's salon flow.
-                </h2>
-
-                <p>
-                  A direct view of the
-                  current schedule without
-                  simulation overlays.
-                </p>
-              </div>
-
-              <button
-                className="secondary-action"
-                onClick={load}
-              >
-                <RefreshCw size={15} />
-                Refresh
-              </button>
-            </div>
-
-            <div className="schedule-list-v2">
-              {appointments.length ===
-              0 ? (
-                <div className="empty-state-v2">
-                  <CalendarDays size={24} />
-
-                  <b>
-                    No appointments today.
-                  </b>
-
-                  <span>
-                    The schedule is
-                    currently open.
-                  </span>
-                </div>
-              ) : (
-                appointments.map(
-                  (appointment) => (
-                    <div
-                      className="schedule-item-v2"
-                      key={appointment.id}
-                    >
-                      <div className="schedule-time">
-                        {formatTime(
-                          appointment.scheduled_start,
-                        )}
-
-                        <span>
-                          {appointment.scheduled_end
-                            ? formatTime(
-                                appointment.scheduled_end,
-                              )
-                            : ""}
-                        </span>
-                      </div>
-
-                      <div className="schedule-service">
-                        <b>
-                          {
-                            appointment.service
-                          }
-                        </b>
-
-                        <span>
-                          {appointment.customer ||
-                            "Booked customer"}
-                        </span>
-                      </div>
-
-                      <div className="schedule-stylist">
-                        <UserRound size={14} />
-
-                        {
-                          appointment.stylist
-                        }
-                      </div>
-
-                      <span className="schedule-status">
-                        {
-                          appointment.status
-                        }
-                      </span>
-                    </div>
-                  ),
-                )
-              )}
-            </div>
-          </section>
-        )}
-
-        {activeView === "customers" && (
-          <section className="secondary-view">
-            <div className="secondary-view-header">
-              <div>
-                <span>
-                  CUSTOMER OPERATIONS
-                </span>
-
-                <h2>
-                  Customer context.
-                </h2>
-
-                <p>
-                  Customer records remain
-                  connected to the
-                  operational workflow.
-                </p>
-              </div>
-            </div>
-
-            <div className="customer-placeholder">
-              <Users size={28} />
-
-              <h3>
-                Customer management
-              </h3>
-
-              <p>
-                Customer records are kept
-                separate from the Decision
-                Engine so SALORA stays
-                focused on operational
-                intelligence rather than
-                becoming a generic CRM.
-              </p>
-
-              <button
-                className="secondary-action"
-                onClick={() =>
-                  changeView(
-                    "overview",
-                  )
-                }
-              >
-                Return to command center
-                <ChevronRight size={15} />
-              </button>
-            </div>
-          </section>
-        )}
-      </section>
+          )}
+        </section>
+      </div>
     </main>
+  );
+}
+
+function BrainIcon() {
+  return (
+    <svg
+      width="21"
+      height="21"
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <path
+        d="M9.5 4.5A3.5 3.5 0 0 0 6 8c0 .35.05.69.15 1.01A3.5 3.5 0 0 0 5 15.5c.32 0 .63-.04.92-.12A3.5 3.5 0 0 0 12 18.5V7.5a3 3 0 0 0-2.5-3Z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+
+      <path
+        d="M14.5 4.5A3.5 3.5 0 0 1 18 8c0 .35-.05.69-.15 1.01A3.5 3.5 0 0 1 19 15.5c-.32 0-.63-.04-.92-.12A3.5 3.5 0 0 1 12 18.5V7.5a3 3 0 0 1 2.5-3Z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+
+      <path
+        d="M8.5 10.5c1 .1 1.7.5 2.1 1.2M15.5 10.5c-1 .1-1.7.5-2.1 1.2M8.8 14c.8-.05 1.5.2 2 .7M15.2 14c-.8-.05-1.5.2-2 .7"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+      />
+    </svg>
   );
 }
 
 function K({
   icon,
-  v,
-  t,
-  sub,
+  label,
+  value,
+  note,
+  trend,
 }: {
   icon: React.ReactNode;
-  v: string | number;
-  t: string;
-  sub: string;
+  label: string;
+  value: string;
+  note: string;
+  trend: React.ReactNode;
 }) {
   return (
-    <div className="kpi-v2 premium-kpi">
-      <div className="kpi-icon">
-        {icon}
+    <div className="kpi-v2">
+      <div className="kpi-v2-top">
+        <span className="kpi-icon">{icon}</span>
+        <span className="kpi-trend">{trend}</span>
       </div>
 
-      <strong>{v}</strong>
+      <span className="kpi-label">{label}</span>
 
-      <span>{t}</span>
+      <strong className="kpi-value">{value}</strong>
 
-      <small>{sub}</small>
+      <span className="kpi-note">{note}</span>
     </div>
   );
 }
 
 function PulseCard({
-  icon,
-  label,
+  title,
   value,
   description,
+  icon,
 }: {
-  icon: React.ReactNode;
-  label: string;
-  value: string | number;
+  title: string;
+  value: string;
   description: string;
+  icon: React.ReactNode;
 }) {
   return (
     <div className="pulse-card">
-      <div className="pulse-card-icon">
-        {icon}
-      </div>
+      <div className="pulse-card-icon">{icon}</div>
 
-      <div className="pulse-card-content">
-        <span>{label}</span>
-
+      <div>
+        <span>{title}</span>
         <strong>{value}</strong>
-
-        <p>{description}</p>
+        <small>{description}</small>
       </div>
     </div>
   );
 }
 
 function ImpactMetric({
-  value,
   label,
-  positive = false,
-  warning = false,
+  value,
+  icon,
 }: {
-  value: string;
   label: string;
-  positive?: boolean;
-  warning?: boolean;
+  value: string;
+  icon: React.ReactNode;
 }) {
   return (
-    <div
-      className={`impact-metric-v3 ${
-        positive
-          ? "metric-positive"
-          : ""
-      } ${
-        warning
-          ? "metric-warning"
-          : ""
-      }`}
-    >
-      <strong>{value}</strong>
+    <div className="impact-metric">
+      <span className="impact-metric-icon">{icon}</span>
 
-      <span>{label}</span>
+      <div>
+        <span>{label}</span>
+        <strong>{value}</strong>
+      </div>
+    </div>
+  );
+}
 
-      {positive && (
-        <TrendingUp size={12} />
-      )}
+function LoopStep({
+  number,
+  icon,
+  title,
+  description,
+}: {
+  number: string;
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="loop-step">
+      <div className="loop-step-top">
+        <span className="loop-number">{number}</span>
+        <span className="loop-icon">{icon}</span>
+      </div>
 
-      {warning && (
-        <TrendingDown size={12} />
-      )}
+      <h3>{title}</h3>
+
+      <p>{description}</p>
+    </div>
+  );
+}
+
+function LoopConnector() {
+  return (
+    <div className="loop-connector" aria-hidden="true">
+      <span />
+      <ChevronRight size={17} />
     </div>
   );
 }

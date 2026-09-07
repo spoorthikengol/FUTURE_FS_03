@@ -1,8 +1,10 @@
 import './env.js';
 
+import crypto from 'node:crypto';
+
 import Fastify, {
   type FastifyReply,
-  type FastifyRequest
+  type FastifyRequest,
 } from 'fastify';
 
 import cookie from '@fastify/cookie';
@@ -11,7 +13,6 @@ import helmet from '@fastify/helmet';
 import rate from '@fastify/rate-limit';
 
 import { z } from 'zod';
-import crypto from 'node:crypto';
 
 import { pool } from './db.js';
 
@@ -19,68 +20,94 @@ import {
   login,
   logout,
   user,
-  setSessionCookie
+  setSessionCookie,
+  type AuthenticatedUser,
 } from './auth.js';
 
 import {
   simulate,
-  type Result as EngineResult
+  type Result as EngineResult,
 } from './engine.js';
 
 /* -------------------------------------------------------------------------- */
 /* Application                                                                */
 /* -------------------------------------------------------------------------- */
 
+const APP_VERSION = '2.0.0';
+const ENGINE_VERSION = '1.3';
+
+const DEFAULT_MAX_DELAY = 30;
+const DEFAULT_MAX_WAIT = 45;
+
+const DEFAULT_API_PORT = 4000;
+const MAX_BODY_SIZE = 64 * 1024;
+
+const appOrigin =
+  process.env.APP_ORIGIN?.trim() ||
+  'http://localhost:3000';
+
+const apiPort = Number(
+  process.env.API_PORT ||
+    DEFAULT_API_PORT,
+);
+
+if (
+  !Number.isInteger(apiPort) ||
+  apiPort < 1 ||
+  apiPort > 65535
+) {
+  throw new Error(
+    'API_PORT must be a valid TCP port.',
+  );
+}
+
 const app = Fastify({
   logger: true,
 
-  bodyLimit: 64 * 1024,
+  bodyLimit: MAX_BODY_SIZE,
 
-  requestIdHeader: 'x-request-id'
+  requestIdHeader: 'x-request-id',
+
+  disableRequestLogging: false,
 });
 
 await app.register(cookie);
 
 await app.register(cors, {
-  origin:
-    process.env.APP_ORIGIN ||
-    'http://localhost:3000',
-
-  credentials: true
+  origin: appOrigin,
+  credentials: true,
 });
 
 await app.register(helmet, {
-  contentSecurityPolicy: false
+  /*
+   * The frontend currently needs Next.js development behavior.
+   * CSP can be introduced separately once the deployed asset
+   * policy is finalized.
+   */
+  contentSecurityPolicy: false,
 });
 
 await app.register(rate, {
   max: 120,
-
-  timeWindow: '1 minute'
+  timeWindow: '1 minute',
 });
 
 /* -------------------------------------------------------------------------- */
 /* Constants                                                                  */
 /* -------------------------------------------------------------------------- */
 
-const APP_VERSION = '2.0.0';
-
-const ENGINE_VERSION = '1.2';
-
-const DEFAULT_MAX_DELAY = 30;
-
-const DEFAULT_MAX_WAIT = 45;
+const SESSION_COOKIE = 'salora_session';
 
 const ACTIVE_APPOINTMENT_STATUSES = [
   'BOOKED',
   'CONFIRMED',
-  'IN_PROGRESS'
+  'IN_PROGRESS',
 ] as const;
 
 const TERMINAL_APPOINTMENT_STATUSES = [
   'CANCELLED',
   'NO_SHOW',
-  'COMPLETED'
+  'COMPLETED',
 ] as const;
 
 /* -------------------------------------------------------------------------- */
@@ -93,7 +120,7 @@ const decisionState = z.enum([
   'ACCEPT',
   'ACCEPT_WITH_WARNING',
   'WAIT',
-  'RESCHEDULE'
+  'RESCHEDULE',
 ]);
 
 const loginSchema = z.object({
@@ -106,7 +133,7 @@ const loginSchema = z.object({
   password: z
     .string()
     .min(8)
-    .max(200)
+    .max(200),
 });
 
 const customerSchema = z.object({
@@ -120,7 +147,7 @@ const customerSchema = z.object({
     .string()
     .trim()
     .max(20)
-    .optional()
+    .optional(),
 });
 
 const simulationSchema = z.object({
@@ -141,7 +168,7 @@ const simulationSchema = z.object({
     .string()
     .trim()
     .max(20)
-    .optional()
+    .optional(),
 });
 
 const acceptanceSchema = z.object({
@@ -153,7 +180,8 @@ const acceptanceSchema = z.object({
     .string()
     .datetime(),
 
-  customerId: uuid.optional(),
+  customerId:
+    uuid.optional(),
 
   customerName: z
     .string()
@@ -169,145 +197,184 @@ const acceptanceSchema = z.object({
     .optional(),
 
   decisionState:
-    decisionState.optional()
+    decisionState.optional(),
 });
+
+const appointmentQuerySchema =
+  z.object({
+    from: z
+      .string()
+      .datetime()
+      .optional(),
+
+    to: z
+      .string()
+      .datetime()
+      .optional(),
+  });
+
+const customerQuerySchema =
+  z.object({
+    search: z
+      .string()
+      .trim()
+      .max(80)
+      .optional(),
+  });
+
+/* -------------------------------------------------------------------------- */
+/* Types                                                                      */
+/* -------------------------------------------------------------------------- */
+
+type AuthenticatedRequest =
+  FastifyRequest & {
+    user?: AuthenticatedUser;
+  };
+
+type Queryable = {
+  query: (
+    text: string,
+    values?: unknown[],
+  ) => Promise<any>;
+};
 
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
 /* -------------------------------------------------------------------------- */
 
+function getAuthenticatedUser(
+  req: FastifyRequest,
+): AuthenticatedUser | null {
+  return (
+    (req as AuthenticatedRequest)
+      .user ?? null
+  );
+}
+
 function fail(
   reply: FastifyReply,
   statusCode: number,
-  error: string
+  error: string,
 ) {
   return reply
     .code(statusCode)
     .send({
-      error
+      error,
     });
 }
 
-function now() {
+function currentTime(): Date {
   return new Date();
 }
 
-function nowIso() {
-  return now().toISOString();
+function currentTimeIso(): string {
+  return currentTime().toISOString();
 }
 
-function safeJson(value: unknown) {
-  return JSON.stringify(value);
+function addMinutes(
+  date: Date,
+  minutes: number,
+): Date {
+  return new Date(
+    date.getTime() +
+      minutes * 60_000,
+  );
 }
 
 function minutesBetween(
   from: Date,
-  to: Date
-) {
+  to: Date,
+): number {
   return Math.max(
     0,
     Math.round(
       (
         to.getTime() -
         from.getTime()
-      ) / 60000
-    )
-  );
-}
-
-function addMinutes(
-  date: Date,
-  minutes: number
-) {
-  return new Date(
-    date.getTime() +
-      minutes * 60000
+      ) / 60_000,
+    ),
   );
 }
 
 function normalizeEmail(
-  email: string
-) {
+  email: string,
+): string {
   return email
     .trim()
     .toLowerCase();
 }
 
 function normalizeIdempotencyKey(
-  key: string
-) {
+  key: string,
+): string {
   return key.trim();
 }
 
 function hashIdempotencyKey(
-  value: string
-) {
+  value: string,
+): string {
   return crypto
     .createHash('sha256')
-    .update(value)
+    .update(value, 'utf8')
     .digest('hex');
 }
 
+function safeJson(
+  value: unknown,
+): string {
+  return JSON.stringify(value);
+}
+
 /* -------------------------------------------------------------------------- */
-/* Timezone helpers                                                           */
+/* Timezone                                                                   */
 /* -------------------------------------------------------------------------- */
 
-/**
- * PostgreSQL timestamptz values represent an absolute instant.
- *
- * Salon opening/closing hours however are local wall-clock values.
- *
- * Therefore operating-hour validation must explicitly use
- * the salon timezone rather than the machine's timezone.
- */
 function getLocalTimeParts(
   date: Date,
-  timezone: string
-) {
+  timezone: string,
+): {
+  hour: number;
+  minute: number;
+} {
   const formatter =
     new Intl.DateTimeFormat(
       'en-GB',
       {
         timeZone: timezone,
-
         hour: '2-digit',
         minute: '2-digit',
-
-        hourCycle: 'h23'
-      }
+        hourCycle: 'h23',
+      },
     );
 
   const parts =
     formatter.formatToParts(date);
 
-  const hour = Number(
-    parts.find(
-      part =>
-        part.type === 'hour'
-    )?.value ?? 0
-  );
-
-  const minute = Number(
-    parts.find(
-      part =>
-        part.type === 'minute'
-    )?.value ?? 0
-  );
-
   return {
-    hour,
-    minute
+    hour: Number(
+      parts.find(
+        part =>
+          part.type === 'hour',
+      )?.value ?? 0,
+    ),
+
+    minute: Number(
+      parts.find(
+        part =>
+          part.type === 'minute',
+      )?.value ?? 0,
+    ),
   };
 }
 
 function localMinutes(
   date: Date,
-  timezone: string
-) {
+  timezone: string,
+): number {
   const parts =
     getLocalTimeParts(
       date,
-      timezone
+      timezone,
     );
 
   return (
@@ -317,22 +384,42 @@ function localMinutes(
 }
 
 function parseTime(
-  value: string
-) {
+  value: string,
+): {
+  hour: number;
+  minute: number;
+} {
   const match =
     /^(\d{2}):(\d{2})/.exec(
-      value
+      value,
     );
 
   if (!match) {
     throw new Error(
-      `Invalid database time value: ${value}`
+      `Invalid database time value: ${value}`,
+    );
+  }
+
+  const hour =
+    Number(match[1]);
+
+  const minute =
+    Number(match[2]);
+
+  if (
+    hour < 0 ||
+    hour > 23 ||
+    minute < 0 ||
+    minute > 59
+  ) {
+    throw new Error(
+      `Invalid database time value: ${value}`,
     );
   }
 
   return {
-    hour: Number(match[1]),
-    minute: Number(match[2])
+    hour,
+    minute,
   };
 }
 
@@ -341,8 +428,8 @@ function isWithinSalonHours(
   end: Date,
   timezone: string,
   openTime: string,
-  closeTime: string
-) {
+  closeTime: string,
+): boolean {
   const open =
     parseTime(openTime);
 
@@ -360,41 +447,56 @@ function isWithinSalonHours(
   const startMinutes =
     localMinutes(
       start,
-      timezone
+      timezone,
     );
 
   const endMinutes =
     localMinutes(
       end,
-      timezone
+      timezone,
     );
+
+  /*
+   * Phase 1 supports same-day operating windows.
+   */
+  if (
+    closeMinutes <=
+    openMinutes
+  ) {
+    return false;
+  }
 
   return (
     startMinutes >=
       openMinutes &&
     endMinutes <=
-      closeMinutes
+      closeMinutes &&
+    start.toDateString() ===
+      end.toDateString()
   );
 }
 
 /* -------------------------------------------------------------------------- */
-/* Schedule pressure                                                          */
+/* Schedule intelligence                                                      */
 /* -------------------------------------------------------------------------- */
 
 function getSchedulePressure(
   appointmentCount: number,
   activeStylists: number,
   openTime: string,
-  closeTime: string
+  closeTime: string,
 ) {
   if (
     activeStylists <= 0
   ) {
     return {
-      level: 'CRITICAL' as const,
+      level:
+        'CRITICAL' as const,
+
       score: 100,
+
       label:
-        'No active stylists'
+        'No active stylists',
     };
   }
 
@@ -414,65 +516,81 @@ function getSchedulePressure(
       (
         open.hour * 60 +
         open.minute
-      )
+      ),
     );
 
   const capacity =
     activeStylists *
-    (operatingMinutes / 60);
+    (
+      operatingMinutes / 60
+    );
 
   const load =
     appointmentCount /
     Math.max(
       1,
-      capacity
+      capacity,
     );
 
-  const score = Math.min(
-    100,
-    Math.max(
-      0,
-      Math.round(
-        load * 100
-      )
-    )
-  );
+  const score =
+    Math.min(
+      100,
+      Math.max(
+        0,
+        Math.round(
+          load * 100,
+        ),
+      ),
+    );
 
   if (load >= 0.9) {
     return {
-      level: 'CRITICAL' as const,
+      level:
+        'CRITICAL' as const,
+
       score,
+
       label:
-        'Very high schedule pressure'
+        'Very high schedule pressure',
     };
   }
 
   if (load >= 0.7) {
     return {
-      level: 'HIGH' as const,
+      level:
+        'HIGH' as const,
+
       score,
+
       label:
-        'High schedule pressure'
+        'High schedule pressure',
     };
   }
 
   if (load >= 0.45) {
     return {
-      level: 'MODERATE' as const,
+      level:
+        'MODERATE' as const,
+
       score,
+
       label:
-        'Moderate schedule pressure'
+        'Moderate schedule pressure',
     };
   }
 
   return {
-    level: 'LOW' as const,
-    score: Math.max(
-      5,
-      score
-    ),
+    level:
+      'LOW' as const,
+
+    score:
+      Math.max(
+        5,
+        score,
+      ),
+
     label:
-      'Healthy available capacity'
+      'Healthy available capacity',
   };
 }
 
@@ -481,7 +599,7 @@ function getSchedulePressure(
 /* -------------------------------------------------------------------------- */
 
 function getDecisionMessage(
-  result: EngineResult | null
+  result: EngineResult | null,
 ) {
   if (!result) {
     return {
@@ -489,7 +607,7 @@ function getDecisionMessage(
         'No safe placement',
 
       message:
-        'SALORA could not find a placement within the current operating limits.'
+        'SALORA could not find a placement within the current operating limits.',
     };
   }
 
@@ -500,7 +618,7 @@ function getDecisionMessage(
           'Accept this walk-in',
 
         message:
-          'A safe immediate placement is available without delaying scheduled customers.'
+          'A safe immediate placement is available without delaying scheduled customers.',
       };
 
     case 'ACCEPT_WITH_WARNING':
@@ -510,8 +628,8 @@ function getDecisionMessage(
 
         message:
           `This placement is feasible but may create up to ${Math.round(
-            result.maxDelay
-          )} minutes of downstream delay.`
+            result.maxDelay,
+          )} minutes of downstream delay.`,
       };
 
     case 'WAIT':
@@ -521,8 +639,8 @@ function getDecisionMessage(
 
         message:
           `A safer placement becomes available in ${Math.round(
-            result.wait
-          )} minutes.`
+            result.wait,
+          )} minutes.`,
       };
 
     case 'RESCHEDULE':
@@ -531,40 +649,36 @@ function getDecisionMessage(
           'Reschedule or offer another service',
 
         message:
-          'No placement satisfies the current wait and delay limits.'
+          'No placement satisfies the current wait and delay limits.',
       };
   }
 }
 
 /* -------------------------------------------------------------------------- */
-/* Engine data loading                                                        */
+/* Engine snapshot                                                            */
 /* -------------------------------------------------------------------------- */
 
 async function loadEngineSnapshot(
-  client: {
-    query: (
-      text: string,
-      values?: unknown[]
-    ) => Promise<any>;
-  },
+  client: Queryable,
   salonId: string,
   serviceId: string,
-  requestedAt: Date
+  requestedAt: Date,
 ) {
   const salonResult =
     await client.query(
       `
-      SELECT
-        id,
-        name,
-        timezone,
-        currency,
-        open_time,
-        close_time
-      FROM salons
-      WHERE id=$1
+        SELECT
+          id,
+          name,
+          timezone,
+          currency,
+          open_time,
+          close_time
+        FROM salons
+        WHERE id = $1
+        LIMIT 1
       `,
-      [salonId]
+      [salonId],
     );
 
   const salon =
@@ -572,29 +686,31 @@ async function loadEngineSnapshot(
 
   if (!salon) {
     return {
-      error: 'SALON_NOT_FOUND'
+      error:
+        'SALON_NOT_FOUND',
     } as const;
   }
 
   const serviceResult =
     await client.query(
       `
-      SELECT
-        id,
-        name,
-        duration_min,
-        price_inr,
-        buffer_min
-      FROM services
-      WHERE
-        id=$1
-        AND salon_id=$2
-        AND active=true
+        SELECT
+          id,
+          name,
+          duration_min,
+          price_inr,
+          buffer_min
+        FROM services
+        WHERE
+          id = $1
+          AND salon_id = $2
+          AND active = true
+        LIMIT 1
       `,
       [
         serviceId,
-        salonId
-      ]
+        salonId,
+      ],
     );
 
   const service =
@@ -602,29 +718,32 @@ async function loadEngineSnapshot(
 
   if (!service) {
     return {
-      error: 'SERVICE_NOT_FOUND'
+      error:
+        'SERVICE_NOT_FOUND',
     } as const;
   }
 
   const stylistResult =
     await client.query(
       `
-      SELECT
-        st.id,
-        st.name
-      FROM stylists st
-      JOIN stylist_skills ss
-        ON ss.stylist_id=st.id
-      WHERE
-        st.salon_id=$1
-        AND st.active=true
-        AND ss.service_id=$2
-      ORDER BY st.name, st.id
+        SELECT
+          st.id,
+          st.name
+        FROM stylists st
+        INNER JOIN stylist_skills ss
+          ON ss.stylist_id = st.id
+        WHERE
+          st.salon_id = $1
+          AND st.active = true
+          AND ss.service_id = $2
+        ORDER BY
+          st.name,
+          st.id
       `,
       [
         salonId,
-        serviceId
-      ]
+        serviceId,
+      ],
     );
 
   const stylists =
@@ -633,39 +752,40 @@ async function loadEngineSnapshot(
   if (!stylists.length) {
     return {
       error:
-        'NO_ELIGIBLE_STYLIST'
+        'NO_ELIGIBLE_STYLIST',
     } as const;
   }
 
-  /*
-   * Include only appointments relevant to the requested
-   * decision day while preserving all active appointments.
-   */
   const appointmentResult =
     await client.query(
       `
-      SELECT
-        id,
-        stylist_id,
-        scheduled_start,
-        scheduled_end,
-        status
-      FROM appointments
-      WHERE
-        salon_id=$1
-        AND status = ANY($2::text[])
-        AND scheduled_end >= $3
-        AND scheduled_start < $3 + interval '1 day'
-      ORDER BY
-        stylist_id,
-        scheduled_start,
-        id
+        SELECT
+          id,
+          stylist_id,
+          scheduled_start,
+          scheduled_end,
+          status
+        FROM appointments
+        WHERE
+          salon_id = $1
+          AND status = ANY($2::text[])
+          AND scheduled_end >= $3
+          AND scheduled_start <
+              $3 + interval '1 day'
+        ORDER BY
+          stylist_id,
+          scheduled_start,
+          id
       `,
       [
         salonId,
-        [...ACTIVE_APPOINTMENT_STATUSES],
-        requestedAt
-      ]
+
+        [
+          ...ACTIVE_APPOINTMENT_STATUSES,
+        ],
+
+        requestedAt,
+      ],
     );
 
   const appointments =
@@ -689,24 +809,24 @@ async function loadEngineSnapshot(
 
         start:
           new Date(
-            appointment.scheduled_start
+            appointment.scheduled_start,
           ),
 
         end:
           new Date(
-            appointment.scheduled_end
+            appointment.scheduled_end,
           ),
 
         status:
-          appointment.status
-      })
+          appointment.status,
+      }),
     );
 
   return {
     salon,
     service,
     stylists,
-    appointments
+    appointments,
   } as const;
 }
 
@@ -716,21 +836,56 @@ async function loadEngineSnapshot(
 
 app.get(
   '/health',
-  async () => ({
-    ok: true,
+  async (
+    _req,
+    reply,
+  ) => {
+    try {
+      await pool.query(
+        'SELECT 1',
+      );
 
-    service:
-      'salora-api',
+      return {
+        ok: true,
 
-    version:
-      APP_VERSION,
+        service:
+          'salora-api',
 
-    engineVersion:
-      ENGINE_VERSION,
+        version:
+          APP_VERSION,
 
-    time:
-      nowIso()
-  })
+        engineVersion:
+          ENGINE_VERSION,
+
+        database:
+          'connected',
+
+        time:
+          currentTimeIso(),
+      };
+    } catch {
+      return reply
+        .code(503)
+        .send({
+          ok: false,
+
+          service:
+            'salora-api',
+
+          version:
+            APP_VERSION,
+
+          engineVersion:
+            ENGINE_VERSION,
+
+          database:
+            'unavailable',
+
+          time:
+            currentTimeIso(),
+        });
+    }
+  },
 );
 
 /* -------------------------------------------------------------------------- */
@@ -743,84 +898,91 @@ app.post(
     config: {
       rateLimit: {
         max: 10,
-        timeWindow: '5 minutes'
-      }
-    }
+        timeWindow:
+          '5 minutes',
+      },
+    },
   },
   async (
-    req: FastifyRequest,
-    reply: FastifyReply
+    req,
+    reply,
   ) => {
     const body =
       loginSchema.parse(
-        req.body
-      );
-
-    const email =
-      normalizeEmail(
-        body.email
+        req.body,
       );
 
     const result =
       await login(
-        email,
-        body.password
+        normalizeEmail(
+          body.email,
+        ),
+        body.password,
       );
 
     if (!result) {
-      /*
-       * Do not reveal whether the email exists.
-       */
       return fail(
         reply,
         401,
-        'Invalid email or password'
+        'Invalid email or password',
       );
     }
 
     setSessionCookie(
       reply,
-      result.token
+      result.token,
     );
 
     return result.user;
-  }
+  },
 );
 
 app.get(
   '/api/me',
   {
-    preHandler: user
+    preHandler: user,
   },
   async (
-    req: FastifyRequest
+    req,
+    reply,
   ) => {
-    return (req as any).user;
-  }
+    const authenticated =
+      getAuthenticatedUser(req);
+
+    if (!authenticated) {
+      return fail(
+        reply,
+        401,
+        'Authentication required.',
+      );
+    }
+
+    return authenticated;
+  },
 );
 
 app.post(
   '/api/auth/logout',
   {
-    preHandler: user
+    preHandler: user,
   },
   async (
-    req: FastifyRequest,
-    reply: FastifyReply
+    req,
+    reply,
   ) => {
-    await logout(req, reply);
-
-    reply.clearCookie(
-      'salora_session',
-      {
-        path: '/'
-      }
+    await logout(
+      req,
+      reply,
     );
 
+    /*
+     * auth.ts already clears the correctly configured cookie.
+     * Do not issue a second conflicting clearCookie call.
+     */
     return {
-      ok: true
+      ok: true,
     };
-  }
+  },
 );
 
 /* -------------------------------------------------------------------------- */
@@ -830,14 +992,14 @@ app.post(
 app.get(
   '/api/dashboard',
   {
-    preHandler: user
+    preHandler: user,
   },
   async (
-    req: FastifyRequest,
-    reply: FastifyReply
+    req,
+    reply,
   ) => {
     const authenticated =
-      (req as any).user;
+      getAuthenticatedUser(req);
 
     if (
       !authenticated?.salonId
@@ -845,7 +1007,7 @@ app.get(
       return fail(
         reply,
         401,
-        'Authentication required.'
+        'Authentication required.',
       );
     }
 
@@ -855,17 +1017,18 @@ app.get(
     const salonResult =
       await pool.query(
         `
-        SELECT
-          id,
-          name,
-          timezone,
-          currency,
-          open_time,
-          close_time
-        FROM salons
-        WHERE id=$1
+          SELECT
+            id,
+            name,
+            timezone,
+            currency,
+            open_time,
+            close_time
+          FROM salons
+          WHERE id = $1
+          LIMIT 1
         `,
-        [salonId]
+        [salonId],
       );
 
     const salon =
@@ -875,7 +1038,7 @@ app.get(
       return fail(
         reply,
         404,
-        'Salon not found.'
+        'Salon not found.',
       );
     }
 
@@ -887,152 +1050,160 @@ app.get(
       noShowResult,
       cancelledResult,
       todayRevenueResult,
-      walkInResult
+      walkInResult,
     ] = await Promise.all([
       pool.query(
         `
-        SELECT
-          id,
-          name,
-          active
-        FROM stylists
-        WHERE salon_id=$1
-        ORDER BY name, id
+          SELECT
+            id,
+            name,
+            active
+          FROM stylists
+          WHERE salon_id = $1
+          ORDER BY
+            name,
+            id
         `,
-        [salonId]
+        [salonId],
       ),
 
       pool.query(
         `
-        SELECT
-          id,
-          name,
-          duration_min,
-          price_inr,
-          buffer_min,
-          active
-        FROM services
-        WHERE salon_id=$1
-        ORDER BY name, id
+          SELECT
+            id,
+            name,
+            duration_min,
+            price_inr,
+            buffer_min,
+            active
+          FROM services
+          WHERE salon_id = $1
+          ORDER BY
+            name,
+            id
         `,
-        [salonId]
+        [salonId],
       ),
 
       pool.query(
         `
-        SELECT
-          a.id,
-          a.customer_id,
-          a.stylist_id,
-          a.service_id,
-          a.scheduled_start,
-          a.scheduled_end,
-          a.status,
-          a.source,
-          c.name AS customer,
-          c.phone AS customer_phone,
-          s.name AS service,
-          s.duration_min,
-          s.price_inr,
-          s.buffer_min,
-          st.name AS stylist
-        FROM appointments a
-        JOIN services s
-          ON s.id=a.service_id
-        JOIN stylists st
-          ON st.id=a.stylist_id
-        LEFT JOIN customers c
-          ON c.id=a.customer_id
-        WHERE
-          a.salon_id=$1
-          AND a.scheduled_start >= now()-interval '2 hours'
-          AND a.scheduled_start < now()+interval '24 hours'
-        ORDER BY
-          a.scheduled_start,
-          a.id
-        LIMIT 100
+          SELECT
+            a.id,
+            a.customer_id,
+            a.stylist_id,
+            a.service_id,
+            a.scheduled_start,
+            a.scheduled_end,
+            a.status,
+            a.source,
+            c.name AS customer,
+            c.phone AS customer_phone,
+            s.name AS service,
+            s.duration_min,
+            s.price_inr,
+            s.buffer_min,
+            st.name AS stylist
+          FROM appointments a
+          INNER JOIN services s
+            ON s.id = a.service_id
+          INNER JOIN stylists st
+            ON st.id = a.stylist_id
+          LEFT JOIN customers c
+            ON c.id = a.customer_id
+          WHERE
+            a.salon_id = $1
+            AND a.scheduled_start >=
+                now() - interval '2 hours'
+            AND a.scheduled_start <
+                now() + interval '24 hours'
+          ORDER BY
+            a.scheduled_start,
+            a.id
+          LIMIT 100
         `,
-        [salonId]
+        [salonId],
       ),
 
       pool.query(
         `
-        SELECT
-          count(*)::int AS total
-        FROM customers
-        WHERE salon_id=$1
+          SELECT
+            count(*)::int AS total
+          FROM customers
+          WHERE salon_id = $1
         `,
-        [salonId]
+        [salonId],
       ),
 
       pool.query(
         `
-        SELECT
-          count(*)::int AS total
-        FROM appointments
-        WHERE
-          salon_id=$1
-          AND status='NO_SHOW'
-          AND created_at >= date_trunc('month', now())
+          SELECT
+            count(*)::int AS total
+          FROM appointments
+          WHERE
+            salon_id = $1
+            AND status = 'NO_SHOW'
+            AND created_at >=
+                date_trunc('month', now())
         `,
-        [salonId]
+        [salonId],
       ),
 
       pool.query(
         `
-        SELECT
-          count(*)::int AS total
-        FROM appointments
-        WHERE
-          salon_id=$1
-          AND status='CANCELLED'
-          AND created_at >= date_trunc('month', now())
+          SELECT
+            count(*)::int AS total
+          FROM appointments
+          WHERE
+            salon_id = $1
+            AND status = 'CANCELLED'
+            AND created_at >=
+                date_trunc('month', now())
         `,
-        [salonId]
+        [salonId],
       ),
 
       pool.query(
         `
-        SELECT
-          COALESCE(
-            SUM(s.price_inr),
-            0
-          )::int AS total
-        FROM appointments a
-        JOIN services s
-          ON s.id=a.service_id
-        WHERE
-          a.salon_id=$1
-          AND a.status IN(
-            'BOOKED',
-            'CONFIRMED',
-            'IN_PROGRESS',
-            'COMPLETED'
-          )
-          AND a.scheduled_start::date =
-            (
-              now() AT TIME ZONE
+          SELECT
+            COALESCE(
+              SUM(s.price_inr),
+              0
+            )::int AS total
+          FROM appointments a
+          INNER JOIN services s
+            ON s.id = a.service_id
+          WHERE
+            a.salon_id = $1
+            AND a.status IN (
+              'BOOKED',
+              'CONFIRMED',
+              'IN_PROGRESS',
+              'COMPLETED'
+            )
+            AND a.scheduled_start::date =
               (
-                SELECT timezone
-                FROM salons
-                WHERE id=$1
-              )
-            )::date
+                now() AT TIME ZONE
+                (
+                  SELECT timezone
+                  FROM salons
+                  WHERE id = $1
+                )
+              )::date
         `,
-        [salonId]
+        [salonId],
       ),
 
       pool.query(
         `
-        SELECT
-          count(*)::int AS total
-        FROM walk_ins
-        WHERE
-          salon_id=$1
-          AND status='WAITING'
+          SELECT
+            count(*)::int AS total
+          FROM walk_ins
+          WHERE
+            salon_id = $1
+            AND status = 'WAITING'
         `,
-        [salonId]
-      )
+        [salonId],
+      ),
     ]);
 
     const stylists =
@@ -1049,7 +1220,7 @@ app.get(
         (stylist: {
           active: boolean;
         }) =>
-          stylist.active
+          stylist.active,
       ).length;
 
     const upcomingAppointments =
@@ -1059,8 +1230,8 @@ app.get(
         }) =>
           ACTIVE_APPOINTMENT_STATUSES.includes(
             appointment.status as
-              typeof ACTIVE_APPOINTMENT_STATUSES[number]
-          )
+              typeof ACTIVE_APPOINTMENT_STATUSES[number],
+          ),
       );
 
     const schedulePressure =
@@ -1068,7 +1239,7 @@ app.get(
         upcomingAppointments.length,
         activeStylists,
         salon.open_time,
-        salon.close_time
+        salon.close_time,
       );
 
     const bookedValue =
@@ -1076,15 +1247,17 @@ app.get(
         (
           total: number,
           appointment: {
-            price_inr: number;
-          }
+            price_inr:
+              | number
+              | string;
+          },
         ) =>
           total +
           Number(
             appointment.price_inr ||
-              0
+              0,
           ),
-        0
+        0,
       );
 
     const completedToday =
@@ -1093,7 +1266,7 @@ app.get(
           status: string;
         }) =>
           appointment.status ===
-          'COMPLETED'
+          'COMPLETED',
       ).length;
 
     return {
@@ -1108,7 +1281,7 @@ app.get(
       customerCount:
         Number(
           customerCountResult
-            .rows[0]?.total ?? 0
+            .rows[0]?.total ?? 0,
         ),
 
       intelligence: {
@@ -1126,29 +1299,29 @@ app.get(
         todayRevenuePotential:
           Number(
             todayRevenueResult
-              .rows[0]?.total ?? 0
+              .rows[0]?.total ?? 0,
           ),
 
         noShowsThisMonth:
           Number(
             noShowResult
-              .rows[0]?.total ?? 0
+              .rows[0]?.total ?? 0,
           ),
 
         cancellationsThisMonth:
           Number(
             cancelledResult
-              .rows[0]?.total ?? 0
+              .rows[0]?.total ?? 0,
           ),
 
         waitingWalkIns:
           Number(
             walkInResult
-              .rows[0]?.total ?? 0
-          )
-      }
+              .rows[0]?.total ?? 0,
+          ),
+      },
     };
-  }
+  },
 );
 
 /* -------------------------------------------------------------------------- */
@@ -1158,23 +1331,23 @@ app.get(
 app.get(
   '/api/customers',
   {
-    preHandler: user
+    preHandler: user,
   },
   async (
-    req: FastifyRequest
+    req,
   ) => {
     const authenticated =
-      (req as any).user;
+      getAuthenticatedUser(req);
+
+    if (!authenticated) {
+      throw new Error(
+        'Authentication context missing.',
+      );
+    }
 
     const query =
-      z.object({
-        search: z
-          .string()
-          .trim()
-          .max(80)
-          .optional()
-      }).parse(
-        req.query
+      customerQuerySchema.parse(
+        req.query,
       );
 
     const search =
@@ -1185,80 +1358,92 @@ app.get(
     const result =
       await pool.query(
         `
-        SELECT
-          id,
-          name,
-          phone,
-          created_at
-        FROM customers
-        WHERE
-          salon_id=$1
-          AND (
-            name ILIKE $2
-            OR COALESCE(phone,'')
-              ILIKE $2
-          )
-        ORDER BY
-          name,
-          id
-        LIMIT 50
+          SELECT
+            id,
+            name,
+            phone,
+            created_at
+          FROM customers
+          WHERE
+            salon_id = $1
+            AND (
+              name ILIKE $2
+              OR COALESCE(phone, '')
+                 ILIKE $2
+            )
+          ORDER BY
+            name,
+            id
+          LIMIT 50
         `,
         [
           authenticated.salonId,
-          search
-        ]
+          search,
+        ],
       );
 
     return result.rows;
-  }
+  },
 );
 
 app.post(
   '/api/customers',
   {
-    preHandler: user
+    preHandler: user,
   },
   async (
-    req: FastifyRequest,
-    reply: FastifyReply
+    req,
+    reply,
   ) => {
     const authenticated =
-      (req as any).user;
+      getAuthenticatedUser(req);
+
+    if (!authenticated) {
+      return fail(
+        reply,
+        401,
+        'Authentication required.',
+      );
+    }
 
     const body =
       customerSchema.parse(
-        req.body
+        req.body,
       );
 
     const result =
       await pool.query(
         `
-        INSERT INTO customers(
-          salon_id,
-          name,
-          phone
-        )
-        VALUES($1,$2,$3)
-        RETURNING
-          id,
-          name,
-          phone,
-          created_at
+          INSERT INTO customers (
+            salon_id,
+            name,
+            phone
+          )
+          VALUES (
+            $1,
+            $2,
+            $3
+          )
+          RETURNING
+            id,
+            name,
+            phone,
+            created_at
         `,
         [
           authenticated.salonId,
           body.name,
           body.phone ||
-            null
-        ]
+            null,
+        ],
       );
 
     return reply
       .code(201)
       .send(
-        result.rows[0]
+        result.rows[0],
       );
-  }
+  },
 );
 
 /* -------------------------------------------------------------------------- */
@@ -1268,41 +1453,37 @@ app.post(
 app.get(
   '/api/appointments',
   {
-    preHandler: user
+    preHandler: user,
   },
   async (
-    req: FastifyRequest
+    req,
   ) => {
     const authenticated =
-      (req as any).user;
+      getAuthenticatedUser(req);
+
+    if (!authenticated) {
+      throw new Error(
+        'Authentication context missing.',
+      );
+    }
 
     const query =
-      z.object({
-        from: z
-          .string()
-          .datetime()
-          .optional(),
-
-        to: z
-          .string()
-          .datetime()
-          .optional()
-      }).parse(
-        req.query
+      appointmentQuerySchema.parse(
+        req.query,
       );
 
     const from =
       query.from ||
       new Date(
         Date.now() -
-          86400000
+          86_400_000,
       ).toISOString();
 
     const to =
       query.to ||
       new Date(
         Date.now() +
-          7 * 86400000
+          7 * 86_400_000,
       ).toISOString();
 
     const fromDate =
@@ -1316,47 +1497,47 @@ app.get(
       toDate.getTime()
     ) {
       throw new Error(
-        'Appointment range must have from before to.'
+        'Appointment range must have from before to.',
       );
     }
 
     const result =
       await pool.query(
         `
-        SELECT
-          a.*,
-          c.name AS customer,
-          c.phone AS customer_phone,
-          s.name AS service,
-          s.duration_min,
-          s.price_inr,
-          s.buffer_min,
-          st.name AS stylist
-        FROM appointments a
-        JOIN services s
-          ON s.id=a.service_id
-        JOIN stylists st
-          ON st.id=a.stylist_id
-        LEFT JOIN customers c
-          ON c.id=a.customer_id
-        WHERE
-          a.salon_id=$1
-          AND a.scheduled_start >= $2
-          AND a.scheduled_start < $3
-        ORDER BY
-          a.scheduled_start,
-          a.id
-        LIMIT 500
+          SELECT
+            a.*,
+            c.name AS customer,
+            c.phone AS customer_phone,
+            s.name AS service,
+            s.duration_min,
+            s.price_inr,
+            s.buffer_min,
+            st.name AS stylist
+          FROM appointments a
+          INNER JOIN services s
+            ON s.id = a.service_id
+          INNER JOIN stylists st
+            ON st.id = a.stylist_id
+          LEFT JOIN customers c
+            ON c.id = a.customer_id
+          WHERE
+            a.salon_id = $1
+            AND a.scheduled_start >= $2
+            AND a.scheduled_start < $3
+          ORDER BY
+            a.scheduled_start,
+            a.id
+          LIMIT 500
         `,
         [
           authenticated.salonId,
           from,
-          to
-        ]
+          to,
+        ],
       );
 
     return result.rows;
-  }
+  },
 );
 
 /* -------------------------------------------------------------------------- */
@@ -1366,85 +1547,95 @@ app.get(
 app.post(
   '/api/walk-ins/simulate',
   {
-    preHandler: user
+    preHandler: user,
+
+    config: {
+      rateLimit: {
+        max: 60,
+        timeWindow:
+          '1 minute',
+      },
+    },
   },
   async (
-    req: FastifyRequest,
-    reply: FastifyReply
+    req,
+    reply,
   ) => {
     const authenticated =
-      (req as any).user;
+      getAuthenticatedUser(req);
+
+    if (!authenticated) {
+      return fail(
+        reply,
+        401,
+        'Authentication required.',
+      );
+    }
 
     const body =
       simulationSchema.parse(
-        req.body
+        req.body,
       );
-
-    const salonId =
-      authenticated.salonId;
 
     const requestedAt =
       body.now
         ? new Date(body.now)
-        : now();
+        : currentTime();
 
     if (
       Number.isNaN(
-        requestedAt.getTime()
+        requestedAt.getTime(),
       )
     ) {
       return fail(
         reply,
         400,
-        'Invalid simulation time.'
+        'Invalid simulation time.',
       );
     }
 
     const snapshot =
       await loadEngineSnapshot(
         pool,
-        salonId,
+        authenticated.salonId,
         body.serviceId,
-        requestedAt
+        requestedAt,
       );
 
     if (
       'error' in snapshot
     ) {
-      if (
-        snapshot.error ===
-        'SALON_NOT_FOUND'
+      switch (
+        snapshot.error
       ) {
-        return fail(
-          reply,
-          404,
-          'Salon not found.'
-        );
-      }
+        case 'SALON_NOT_FOUND':
+          return fail(
+            reply,
+            404,
+            'Salon not found.',
+          );
 
-      if (
-        snapshot.error ===
-        'SERVICE_NOT_FOUND'
-      ) {
-        return fail(
-          reply,
-          404,
-          'Service not found.'
-        );
-      }
+        case 'SERVICE_NOT_FOUND':
+          return fail(
+            reply,
+            404,
+            'Service not found.',
+          );
 
-      return fail(
-        reply,
-        409,
-        'No active stylist is qualified for this service.'
-      );
+        case 'NO_ELIGIBLE_STYLIST':
+          return fail(
+            reply,
+            409,
+            'No active stylist is qualified for this service.',
+          );
+      }
     }
 
     const {
       salon,
       service,
       stylists,
-      appointments
+      appointments,
     } = snapshot;
 
     const candidates =
@@ -1454,17 +1645,17 @@ app.post(
 
         duration:
           Number(
-            service.duration_min
+            service.duration_min,
           ),
 
         price:
           Number(
-            service.price_inr
+            service.price_inr,
           ),
 
         buffer:
           Number(
-            service.buffer_min
+            service.buffer_min,
           ),
 
         maxDelay:
@@ -1478,10 +1669,10 @@ app.post(
             (stylist: {
               id: string;
             }) =>
-              stylist.id
+              stylist.id,
           ),
 
-        appointments
+        appointments,
       }).filter(
         candidate =>
           isWithinSalonHours(
@@ -1489,40 +1680,41 @@ app.post(
             candidate.end,
             salon.timezone,
             salon.open_time,
-            salon.close_time
-          )
+            salon.close_time,
+          ),
       );
 
     const recommendation =
-      candidates[0] ||
+      candidates[0] ??
       null;
 
     /*
      * Persist simulation history.
      *
-     * This is the beginning of SALORA's defensible
-     * Decision History Dataset.
+     * Persistence is intentionally non-blocking for the
+     * decision itself. A temporary analytics/history failure
+     * must not prevent reception staff from receiving a result.
      */
     try {
       await pool.query(
         `
-        INSERT INTO decision_simulations(
-          salon_id,
-          requested_at,
-          engine_version,
-          input,
-          result
-        )
-        VALUES(
-          $1,
-          $2,
-          $3,
-          $4,
-          $5
-        )
+          INSERT INTO decision_simulations (
+            salon_id,
+            requested_at,
+            engine_version,
+            input,
+            result
+          )
+          VALUES (
+            $1,
+            $2,
+            $3,
+            $4,
+            $5
+          )
         `,
         [
-          salonId,
+          authenticated.salonId,
 
           requestedAt,
 
@@ -1544,7 +1736,7 @@ app.post(
               null,
 
             requestedAt:
-              requestedAt.toISOString()
+              requestedAt.toISOString(),
           }),
 
           safeJson({
@@ -1553,21 +1745,19 @@ app.post(
             candidates:
               candidates.slice(
                 0,
-                8
-              )
-          })
-        ]
+                8,
+              ),
+          }),
+        ],
       );
     } catch (error) {
-      /*
-       * Simulation remains available even if history
-       * persistence temporarily fails.
-       */
       req.log.warn(
         {
-          error
+          error,
+          salonId:
+            authenticated.salonId,
         },
-        'Decision simulation history persistence failed'
+        'Decision simulation history persistence failed',
       );
     }
 
@@ -1577,12 +1767,12 @@ app.post(
       candidates:
         candidates.slice(
           0,
-          8
+          8,
         ),
 
       decision:
         getDecisionMessage(
-          recommendation
+          recommendation,
         ),
 
       meta: {
@@ -1591,17 +1781,17 @@ app.post(
 
         duration:
           Number(
-            service.duration_min
+            service.duration_min,
           ),
 
         price:
           Number(
-            service.price_inr
+            service.price_inr,
           ),
 
         buffer:
           Number(
-            service.buffer_min
+            service.buffer_min,
           ),
 
         timezone:
@@ -1611,10 +1801,10 @@ app.post(
           ENGINE_VERSION,
 
         generatedAt:
-          nowIso()
-      }
+          currentTimeIso(),
+      },
     };
-  }
+  },
 );
 
 /* -------------------------------------------------------------------------- */
@@ -1624,29 +1814,37 @@ app.post(
 app.post(
   '/api/walk-ins/accept',
   {
-    preHandler: user
+    preHandler: user,
+
+    config: {
+      rateLimit: {
+        max: 30,
+        timeWindow:
+          '1 minute',
+      },
+    },
   },
   async (
-    req: FastifyRequest,
-    reply: FastifyReply
+    req,
+    reply,
   ) => {
     const authenticated =
-      (req as any).user;
+      getAuthenticatedUser(req);
 
     if (
       !authenticated?.salonId ||
-      !authenticated?.id
+      !authenticated.id
     ) {
       return fail(
         reply,
         401,
-        'Authentication required.'
+        'Authentication required.',
       );
     }
 
     const body =
       acceptanceSchema.parse(
-        req.body
+        req.body,
       );
 
     const rawIdempotencyKey =
@@ -1661,13 +1859,13 @@ app.post(
       return fail(
         reply,
         400,
-        'A valid Idempotency-Key is required.'
+        'A valid Idempotency-Key is required.',
       );
     }
 
     const idempotencyKey =
       normalizeIdempotencyKey(
-        rawIdempotencyKey
+        rawIdempotencyKey,
       );
 
     if (
@@ -1679,13 +1877,13 @@ app.post(
       return fail(
         reply,
         400,
-        'A valid Idempotency-Key is required.'
+        'A valid Idempotency-Key is required.',
       );
     }
 
     const idempotencyFingerprint =
       hashIdempotencyKey(
-        idempotencyKey
+        idempotencyKey,
       );
 
     const salonId =
@@ -1699,7 +1897,7 @@ app.post(
 
     try {
       await client.query(
-        'BEGIN'
+        'BEGIN',
       );
 
       /* -------------------------------------------------------------------- */
@@ -1709,59 +1907,53 @@ app.post(
       const existing =
         await client.query(
           `
-          SELECT
-            response
-          FROM idempotency_keys
-          WHERE
-            salon_id=$1
-            AND user_id=$2
-            AND key=$3
-          FOR UPDATE
+            SELECT
+              response
+            FROM idempotency_keys
+            WHERE
+              salon_id = $1
+              AND user_id = $2
+              AND key = $3
+            FOR UPDATE
           `,
           [
             salonId,
             userId,
-            idempotencyKey
-          ]
+            idempotencyKey,
+          ],
         );
 
       if (
         existing.rows[0]
       ) {
         await client.query(
-          'COMMIT'
+          'COMMIT',
         );
 
-        return existing.rows[0]
+        return existing
+          .rows[0]
           .response;
       }
 
       /* -------------------------------------------------------------------- */
-      /* Salon lock                                                            */
+      /* Serialize schedule-changing operation                                */
       /* -------------------------------------------------------------------- */
 
-      /*
-       * The salon row acts as the serialization point for
-       * competing walk-in acceptance requests.
-       *
-       * This prevents two receptionists from simultaneously
-       * accepting the same scarce schedule capacity.
-       */
       const salonResult =
         await client.query(
           `
-          SELECT
-            id,
-            name,
-            timezone,
-            currency,
-            open_time,
-            close_time
-          FROM salons
-          WHERE id=$1
-          FOR UPDATE
+            SELECT
+              id,
+              name,
+              timezone,
+              currency,
+              open_time,
+              close_time
+            FROM salons
+            WHERE id = $1
+            FOR UPDATE
           `,
-          [salonId]
+          [salonId],
         );
 
       const salon =
@@ -1769,13 +1961,13 @@ app.post(
 
       if (!salon) {
         await client.query(
-          'ROLLBACK'
+          'ROLLBACK',
         );
 
         return fail(
           reply,
           404,
-          'Salon not found.'
+          'Salon not found.',
         );
       }
 
@@ -1786,22 +1978,23 @@ app.post(
       const serviceResult =
         await client.query(
           `
-          SELECT
-            id,
-            name,
-            duration_min,
-            price_inr,
-            buffer_min
-          FROM services
-          WHERE
-            id=$1
-            AND salon_id=$2
-            AND active=true
+            SELECT
+              id,
+              name,
+              duration_min,
+              price_inr,
+              buffer_min
+            FROM services
+            WHERE
+              id = $1
+              AND salon_id = $2
+              AND active = true
+            LIMIT 1
           `,
           [
             body.serviceId,
-            salonId
-          ]
+            salonId,
+          ],
         );
 
       const service =
@@ -1809,13 +2002,13 @@ app.post(
 
       if (!service) {
         await client.query(
-          'ROLLBACK'
+          'ROLLBACK',
         );
 
         return fail(
           reply,
           404,
-          'Service not found.'
+          'Service not found.',
         );
       }
 
@@ -1826,23 +2019,24 @@ app.post(
       const stylistResult =
         await client.query(
           `
-          SELECT
-            st.id,
-            st.name
-          FROM stylists st
-          JOIN stylist_skills ss
-            ON ss.stylist_id=st.id
-          WHERE
-            st.id=$1
-            AND st.salon_id=$2
-            AND st.active=true
-            AND ss.service_id=$3
+            SELECT
+              st.id,
+              st.name
+            FROM stylists st
+            INNER JOIN stylist_skills ss
+              ON ss.stylist_id = st.id
+            WHERE
+              st.id = $1
+              AND st.salon_id = $2
+              AND st.active = true
+              AND ss.service_id = $3
+            LIMIT 1
           `,
           [
             body.stylistId,
             salonId,
-            body.serviceId
-          ]
+            body.serviceId,
+          ],
         );
 
       const stylist =
@@ -1850,38 +2044,38 @@ app.post(
 
       if (!stylist) {
         await client.query(
-          'ROLLBACK'
+          'ROLLBACK',
         );
 
         return fail(
           reply,
           409,
-          'Stylist is not eligible for this service.'
+          'Stylist is not eligible for this service.',
         );
       }
 
       /* -------------------------------------------------------------------- */
-      /* Time                                                                  */
+      /* Placement time                                                        */
       /* -------------------------------------------------------------------- */
 
       const start =
         new Date(
-          body.startAt
+          body.startAt,
         );
 
       if (
         Number.isNaN(
-          start.getTime()
+          start.getTime(),
         )
       ) {
         await client.query(
-          'ROLLBACK'
+          'ROLLBACK',
         );
 
         return fail(
           reply,
           400,
-          'Invalid start time.'
+          'Invalid start time.',
         );
       }
 
@@ -1889,8 +2083,8 @@ app.post(
         addMinutes(
           start,
           Number(
-            service.duration_min
-          )
+            service.duration_min,
+          ),
         );
 
       if (
@@ -1899,17 +2093,38 @@ app.post(
           end,
           salon.timezone,
           salon.open_time,
-          salon.close_time
+          salon.close_time,
         )
       ) {
         await client.query(
-          'ROLLBACK'
+          'ROLLBACK',
         );
 
         return fail(
           reply,
           409,
-          'The selected placement is outside salon operating hours.'
+          'The selected placement is outside salon operating hours.',
+        );
+      }
+
+      /*
+       * Do not allow acceptance of a placement in the past.
+       */
+      const decisionNow =
+        currentTime();
+
+      if (
+        start.getTime() <
+        decisionNow.getTime()
+      ) {
+        await client.query(
+          'ROLLBACK',
+        );
+
+        return fail(
+          reply,
+          409,
+          'The selected placement is already in the past. Simulate again.',
         );
       }
 
@@ -1920,36 +2135,35 @@ app.post(
       let customerId =
         body.customerId;
 
-      if (
-        customerId
-      ) {
+      if (customerId) {
         const customer =
           await client.query(
             `
-            SELECT
-              id
-            FROM customers
-            WHERE
-              id=$1
-              AND salon_id=$2
+              SELECT
+                id
+              FROM customers
+              WHERE
+                id = $1
+                AND salon_id = $2
+              LIMIT 1
             `,
             [
               customerId,
-              salonId
-            ]
+              salonId,
+            ],
           );
 
         if (
           !customer.rows[0]
         ) {
           await client.query(
-            'ROLLBACK'
+            'ROLLBACK',
           );
 
           return fail(
             reply,
             400,
-            'Customer does not belong to this salon.'
+            'Customer does not belong to this salon.',
           );
         }
       }
@@ -1961,28 +2175,29 @@ app.post(
         const customer =
           await client.query(
             `
-            INSERT INTO customers(
-              salon_id,
-              name,
-              phone
-            )
-            VALUES(
-              $1,
-              $2,
-              $3
-            )
-            RETURNING id
+              INSERT INTO customers (
+                salon_id,
+                name,
+                phone
+              )
+              VALUES (
+                $1,
+                $2,
+                $3
+              )
+              RETURNING id
             `,
             [
               salonId,
               body.customerName,
               body.customerPhone ||
-                null
-            ]
+                null,
+            ],
           );
 
         customerId =
-          customer.rows[0].id;
+          customer.rows[0]
+            .id;
       }
 
       /* -------------------------------------------------------------------- */
@@ -1992,32 +2207,33 @@ app.post(
       const appointmentResult =
         await client.query(
           `
-          SELECT
-            id,
-            stylist_id,
-            scheduled_start,
-            scheduled_end,
-            status
-          FROM appointments
-          WHERE
-            salon_id=$1
-            AND status = ANY($2::text[])
-            AND scheduled_end >= $3
-            AND scheduled_start < $3 + interval '1 day'
-          ORDER BY
-            stylist_id,
-            scheduled_start,
-            id
+            SELECT
+              id,
+              stylist_id,
+              scheduled_start,
+              scheduled_end,
+              status
+            FROM appointments
+            WHERE
+              salon_id = $1
+              AND status = ANY($2::text[])
+              AND scheduled_end >= $3
+              AND scheduled_start <
+                  $3 + interval '1 day'
+            ORDER BY
+              stylist_id,
+              scheduled_start,
+              id
           `,
           [
             salonId,
 
             [
-              ...ACTIVE_APPOINTMENT_STATUSES
+              ...ACTIVE_APPOINTMENT_STATUSES,
             ],
 
-            start
-          ]
+            start,
+          ],
         );
 
       const appointments =
@@ -2041,36 +2257,36 @@ app.post(
 
             start:
               new Date(
-                appointment.scheduled_start
+                appointment.scheduled_start,
               ),
 
             end:
               new Date(
-                appointment.scheduled_end
+                appointment.scheduled_end,
               ),
 
             status:
-              appointment.status
-          })
+              appointment.status,
+          }),
         );
 
       /* -------------------------------------------------------------------- */
-      /* Direct conflict check                                                 */
+      /* Fresh hard conflict check                                             */
       /* -------------------------------------------------------------------- */
 
       const conflict =
         await client.query(
           `
-          SELECT
-            id
-          FROM appointments
-          WHERE
-            salon_id=$1
-            AND stylist_id=$2
-            AND status = ANY($3::text[])
-            AND scheduled_start < $4
-            AND scheduled_end > $5
-          LIMIT 1
+            SELECT
+              id
+            FROM appointments
+            WHERE
+              salon_id = $1
+              AND stylist_id = $2
+              AND status = ANY($3::text[])
+              AND scheduled_start < $4
+              AND scheduled_end > $5
+            LIMIT 1
           `,
           [
             salonId,
@@ -2078,51 +2294,51 @@ app.post(
             body.stylistId,
 
             [
-              ...ACTIVE_APPOINTMENT_STATUSES
+              ...ACTIVE_APPOINTMENT_STATUSES,
             ],
 
             end,
 
-            start
-          ]
+            start,
+          ],
         );
 
       if (
         conflict.rows[0]
       ) {
         await client.query(
-          'ROLLBACK'
+          'ROLLBACK',
         );
 
         return fail(
           reply,
           409,
-          'The schedule changed. Simulate again before accepting.'
+          'The schedule changed. Simulate again before accepting.',
         );
       }
 
       /* -------------------------------------------------------------------- */
-      /* Fresh Decision Engine verification                                    */
+      /* Fresh engine verification                                             */
       /* -------------------------------------------------------------------- */
 
       const candidates =
         simulate({
           now:
-            now(),
+            decisionNow,
 
           duration:
             Number(
-              service.duration_min
+              service.duration_min,
             ),
 
           price:
             Number(
-              service.price_inr
+              service.price_inr,
             ),
 
           buffer:
             Number(
-              service.buffer_min
+              service.buffer_min,
             ),
 
           maxDelay:
@@ -2137,15 +2353,15 @@ app.post(
                 appointments
                   .map(
                     appointment =>
-                      appointment.stylistId
+                      appointment.stylistId,
                   )
                   .concat(
-                    body.stylistId
-                  )
-              )
+                    body.stylistId,
+                  ),
+              ),
             ],
 
-          appointments
+          appointments,
         }).filter(
           candidate =>
             isWithinSalonHours(
@@ -2153,8 +2369,8 @@ app.post(
               candidate.end,
               salon.timezone,
               salon.open_time,
-              salon.close_time
-            )
+              salon.close_time,
+            ),
         );
 
       const selected =
@@ -2163,56 +2379,66 @@ app.post(
             candidate.stylistId ===
               body.stylistId &&
             candidate.start.getTime() ===
-              start.getTime()
+              start.getTime(),
         );
 
       if (!selected) {
         await client.query(
-          'ROLLBACK'
+          'ROLLBACK',
         );
 
         return fail(
           reply,
           409,
-          'This placement is no longer approved by SALORA. Simulate again before accepting.'
+          'This placement is no longer approved by SALORA. Simulate again before accepting.',
         );
       }
 
-      /*
-       * Never trust a client-provided decision state.
-       *
-       * The server uses the freshly recomputed engine result.
-       */
       const actualDecisionState =
         selected.state;
+
+      /*
+       * Never trust the client-provided decision state.
+       */
+      if (
+        body.decisionState &&
+        body.decisionState !==
+          actualDecisionState
+      ) {
+        await client.query(
+          'ROLLBACK',
+        );
+
+        return fail(
+          reply,
+          409,
+          'The decision changed. Simulate again before accepting.',
+        );
+      }
 
       if (
         actualDecisionState ===
         'RESCHEDULE'
       ) {
         await client.query(
-          'ROLLBACK'
+          'ROLLBACK',
         );
 
         return fail(
           reply,
           409,
-          'SALORA recommends rescheduling this walk-in.'
+          'SALORA recommends rescheduling this walk-in.',
         );
       }
 
-      /*
-       * A WAIT recommendation must actually represent
-       * a future placement.
-       */
       if (
         actualDecisionState ===
         'WAIT'
       ) {
         const wait =
           minutesBetween(
-            now(),
-            start
+            decisionNow,
+            start,
           );
 
         if (
@@ -2221,38 +2447,19 @@ app.post(
             DEFAULT_MAX_WAIT
         ) {
           await client.query(
-            'ROLLBACK'
+            'ROLLBACK',
           );
 
           return fail(
             reply,
             409,
-            'The selected WAIT placement is outside the allowed waiting window.'
+            'The selected WAIT placement is outside the allowed waiting window.',
           );
         }
       }
 
-      /*
-       * Client cannot downgrade/upgrade the engine decision.
-       */
-      if (
-        body.decisionState &&
-        body.decisionState !==
-          actualDecisionState
-      ) {
-        await client.query(
-          'ROLLBACK'
-        );
-
-        return fail(
-          reply,
-          409,
-          'The decision changed. Simulate again before accepting.'
-        );
-      }
-
       /* -------------------------------------------------------------------- */
-      /* Buffer verification                                                   */
+      /* Fresh buffer verification                                             */
       /* -------------------------------------------------------------------- */
 
       const previous =
@@ -2262,23 +2469,21 @@ app.post(
               appointment.stylistId ===
                 body.stylistId &&
               appointment.end.getTime() <=
-                start.getTime()
+                start.getTime(),
           )
           .sort(
             (a, b) =>
               b.end.getTime() -
-              a.end.getTime()
+              a.end.getTime(),
           )[0];
 
-      if (
-        previous
-      ) {
+      if (previous) {
         const earliest =
           addMinutes(
             previous.end,
             Number(
-              service.buffer_min
-            )
+              service.buffer_min,
+            ),
           );
 
         if (
@@ -2286,28 +2491,26 @@ app.post(
           earliest.getTime()
         ) {
           await client.query(
-            'ROLLBACK'
+            'ROLLBACK',
           );
 
           return fail(
             reply,
             409,
-            `The placement violates the required ${service.buffer_min}-minute service buffer.`
+            `The placement violates the required ${service.buffer_min}-minute service buffer.`,
           );
         }
       }
 
       /* -------------------------------------------------------------------- */
-      /* Fresh downstream impact                                               */
+      /* Fresh cascade verification                                            */
       /* -------------------------------------------------------------------- */
 
       let cursor =
         new Date(end);
 
       let totalDelay = 0;
-
       let maximumDelay = 0;
-
       let affectedAppointments = 0;
 
       const downstream =
@@ -2317,15 +2520,17 @@ app.post(
               appointment.stylistId ===
                 body.stylistId &&
               appointment.start.getTime() >=
-                start.getTime()
+                start.getTime(),
           )
           .sort(
             (a, b) =>
               a.start.getTime() -
                 b.start.getTime() ||
+              a.end.getTime() -
+                b.end.getTime() ||
               a.id.localeCompare(
-                b.id
-              )
+                b.id,
+              ),
           );
 
       for (
@@ -2333,38 +2538,40 @@ app.post(
         of downstream
       ) {
         if (
-          cursor.getTime() >
+          cursor.getTime() <=
           appointment.start.getTime()
         ) {
-          const delay =
-            minutesBetween(
-              appointment.start,
-              cursor
-            );
-
-          totalDelay +=
-            delay;
-
-          maximumDelay =
-            Math.max(
-              maximumDelay,
-              delay
-            );
-
-          affectedAppointments +=
-            1;
-
-          cursor =
-            addMinutes(
-              appointment.end,
-              delay
-            );
-        } else {
           cursor =
             new Date(
-              appointment.end
+              appointment.end,
             );
+
+          continue;
         }
+
+        const delay =
+          minutesBetween(
+            appointment.start,
+            cursor,
+          );
+
+        totalDelay +=
+          delay;
+
+        maximumDelay =
+          Math.max(
+            maximumDelay,
+            delay,
+          );
+
+        affectedAppointments +=
+          1;
+
+        cursor =
+          addMinutes(
+            appointment.end,
+            delay,
+          );
       }
 
       if (
@@ -2372,35 +2579,44 @@ app.post(
         DEFAULT_MAX_DELAY
       ) {
         await client.query(
-          'ROLLBACK'
+          'ROLLBACK',
         );
 
         return fail(
           reply,
           409,
-          `Current schedule would create ${maximumDelay} minutes of downstream delay. Simulate again.`
+          `Current schedule would create ${maximumDelay} minutes of downstream delay. Simulate again.`,
         );
       }
 
       /*
-       * Verify the database-level impact matches the engine result.
+       * The selected engine result and the fresh validation must
+       * agree before the database is changed.
        */
       if (
         Math.round(
-          selected.maxDelay
+          selected.totalDelay,
         ) !==
-          Math.round(
-            maximumDelay
-          )
+        Math.round(
+          totalDelay,
+        ) ||
+        Math.round(
+          selected.maxDelay,
+        ) !==
+        Math.round(
+          maximumDelay,
+        ) ||
+        selected.affected !==
+        affectedAppointments
       ) {
         await client.query(
-          'ROLLBACK'
+          'ROLLBACK',
         );
 
         return fail(
           reply,
           409,
-          'Schedule impact changed during validation. Simulate again.'
+          'Schedule impact changed during validation. Simulate again.',
         );
       }
 
@@ -2408,75 +2624,80 @@ app.post(
       /* Appointment creation                                                  */
       /* -------------------------------------------------------------------- */
 
-      const appointmentResultInsert =
+      const appointmentInsert =
         await client.query(
           `
-          INSERT INTO appointments(
-            salon_id,
-            customer_id,
-            stylist_id,
-            service_id,
-            scheduled_start,
-            scheduled_end,
-            status,
-            source
-          )
-          VALUES(
-            $1,
-            $2,
-            $3,
-            $4,
-            $5,
-            $6,
-            'CONFIRMED',
-            'WALK_IN'
-          )
-          RETURNING
-            id,
-            scheduled_start,
-            scheduled_end,
-            status
+            INSERT INTO appointments (
+              salon_id,
+              customer_id,
+              stylist_id,
+              service_id,
+              scheduled_start,
+              scheduled_end,
+              status,
+              source
+            )
+            VALUES (
+              $1,
+              $2,
+              $3,
+              $4,
+              $5,
+              $6,
+              'CONFIRMED',
+              'WALK_IN'
+            )
+            RETURNING
+              id,
+              scheduled_start,
+              scheduled_end,
+              status
           `,
           [
             salonId,
+
             customerId ||
               null,
+
             body.stylistId,
+
             body.serviceId,
+
             start,
-            end
-          ]
+
+            end,
+          ],
         );
 
       const appointment =
-        appointmentResultInsert
+        appointmentInsert
           .rows[0];
 
       /* -------------------------------------------------------------------- */
       /* Walk-in creation                                                      */
       /* -------------------------------------------------------------------- */
 
-      const walkInResult =
+      const walkInInsert =
         await client.query(
           `
-          INSERT INTO walk_ins(
-            salon_id,
-            customer_id,
-            service_id,
-            status,
-            decision_state
-          )
-          VALUES(
-            $1,
-            $2,
-            $3,
-            'ACCEPTED',
-            $4
-          )
-          RETURNING
-            id,
-            status,
-            decision_state
+            INSERT INTO walk_ins (
+              salon_id,
+              customer_id,
+              service_id,
+              status,
+              decision_state
+            )
+            VALUES (
+              $1,
+              $2,
+              $3,
+              'ACCEPTED',
+              $4
+            )
+            RETURNING
+              id,
+              status,
+              decision_state
           `,
           [
             salonId,
@@ -2486,12 +2707,13 @@ app.post(
 
             body.serviceId,
 
-            actualDecisionState
-          ]
+            actualDecisionState,
+          ],
         );
 
       const walkIn =
-        walkInResult.rows[0];
+        walkInInsert
+          .rows[0];
 
       /* -------------------------------------------------------------------- */
       /* Response                                                              */
@@ -2515,7 +2737,7 @@ app.post(
         intelligence: {
           revenue:
             Number(
-              service.price_inr
+              service.price_inr,
             ),
 
           totalDelay,
@@ -2534,28 +2756,28 @@ app.post(
             stylist.name,
 
           service:
-            service.name
-        }
+            service.name,
+        },
       };
 
       /* -------------------------------------------------------------------- */
-      /* Idempotency persistence                                               */
+      /* Idempotency                                                           */
       /* -------------------------------------------------------------------- */
 
       await client.query(
         `
-        INSERT INTO idempotency_keys(
-          salon_id,
-          user_id,
-          key,
-          response
-        )
-        VALUES(
-          $1,
-          $2,
-          $3,
-          $4
-        )
+          INSERT INTO idempotency_keys (
+            salon_id,
+            user_id,
+            key,
+            response
+          )
+          VALUES (
+            $1,
+            $2,
+            $3,
+            $4
+          )
         `,
         [
           salonId,
@@ -2565,9 +2787,9 @@ app.post(
           idempotencyKey,
 
           safeJson(
-            response
-          )
-        ]
+            response,
+          ),
+        ],
       );
 
       /* -------------------------------------------------------------------- */
@@ -2576,22 +2798,22 @@ app.post(
 
       await client.query(
         `
-        INSERT INTO audit_events(
-          salon_id,
-          actor_id,
-          event_type,
-          entity_type,
-          entity_id,
-          metadata
-        )
-        VALUES(
-          $1,
-          $2,
-          $3,
-          $4,
-          $5,
-          $6
-        )
+          INSERT INTO audit_events (
+            salon_id,
+            actor_id,
+            event_type,
+            entity_type,
+            entity_id,
+            metadata
+          )
+          VALUES (
+            $1,
+            $2,
+            $3,
+            $4,
+            $5,
+            $6
+          )
         `,
         [
           salonId,
@@ -2619,7 +2841,7 @@ app.post(
 
             revenue:
               Number(
-                service.price_inr
+                service.price_inr,
               ),
 
             totalDelay,
@@ -2631,9 +2853,9 @@ app.post(
             engineVersion:
               ENGINE_VERSION,
 
-            idempotencyFingerprint
-          })
-        ]
+            idempotencyFingerprint,
+          }),
+        ],
       );
 
       /* -------------------------------------------------------------------- */
@@ -2642,18 +2864,18 @@ app.post(
 
       await client.query(
         `
-        INSERT INTO notifications(
-          salon_id,
-          channel,
-          recipient,
-          payload
-        )
-        VALUES(
-          $1,
-          $2,
-          $3,
-          $4
-        )
+          INSERT INTO notifications (
+            salon_id,
+            channel,
+            recipient,
+            payload
+          )
+          VALUES (
+            $1,
+            $2,
+            $3,
+            $4
+          )
         `,
         [
           salonId,
@@ -2682,9 +2904,9 @@ app.post(
               appointment.scheduled_start,
 
             decision:
-              actualDecisionState
-          })
-        ]
+              actualDecisionState,
+          }),
+        ],
       );
 
       /* -------------------------------------------------------------------- */
@@ -2692,24 +2914,29 @@ app.post(
       /* -------------------------------------------------------------------- */
 
       await client.query(
-        'COMMIT'
+        'COMMIT',
       );
 
       return response;
     } catch (error) {
       try {
         await client.query(
-          'ROLLBACK'
+          'ROLLBACK',
         );
-      } catch {
-        // Rollback failure must not mask original error.
+      } catch (rollbackError) {
+        req.log.error(
+          {
+            rollbackError,
+          },
+          'Transaction rollback failed',
+        );
       }
 
       throw error;
     } finally {
       client.release();
     }
-  }
+  },
 );
 
 /* -------------------------------------------------------------------------- */
@@ -2720,7 +2947,7 @@ app.setErrorHandler(
   (
     error,
     req,
-    reply
+    reply,
   ) => {
     if (
       error instanceof z.ZodError
@@ -2728,9 +2955,9 @@ app.setErrorHandler(
       req.log.warn(
         {
           issues:
-            error.issues
+            error.issues,
         },
-        'Request validation failed'
+        'Request validation failed',
       );
 
       return reply
@@ -2744,55 +2971,71 @@ app.setErrorHandler(
               issue => ({
                 path:
                   issue.path.join(
-                    '.'
+                    '.',
                   ),
 
                 message:
-                  issue.message
-              })
-            )
+                  issue.message,
+              }),
+            ),
+        });
+    }
+
+    /*
+     * PostgreSQL unique constraint violations.
+     *
+     * This is particularly useful for idempotency races.
+     */
+    if (
+      typeof error ===
+        'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as {
+        code?: string;
+      }).code === '23505'
+    ) {
+      req.log.warn(
+        {
+          error,
+        },
+        'Database uniqueness conflict',
+      );
+
+      return reply
+        .code(409)
+        .send({
+          error:
+            'The request conflicts with an existing record.',
         });
     }
 
     req.log.error(
       {
-        error
+        error,
+        requestId:
+          req.id,
       },
-      'Unhandled API error'
+      'Unhandled API error',
     );
 
     return reply
       .code(500)
       .send({
         error:
-          'Internal server error'
+          'Internal server error',
       });
-  }
+  },
 );
 
 /* -------------------------------------------------------------------------- */
 /* Startup                                                                    */
 /* -------------------------------------------------------------------------- */
 
-const port =
-  Number(
-    process.env.API_PORT ||
-      4000
-  );
-
-if (
-  !Number.isInteger(port) ||
-  port < 1 ||
-  port > 65535
-) {
-  throw new Error(
-    'API_PORT must be a valid TCP port.'
-  );
-}
-
 await app.listen({
   host:
     '0.0.0.0',
 
-  port
+  port:
+    apiPort,
 });

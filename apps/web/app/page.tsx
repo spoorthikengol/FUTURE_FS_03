@@ -11,6 +11,8 @@ import {
   GitBranch,
   ShieldCheck,
   Sparkles,
+  TrendingUp,
+  Users,
   Target,
   Zap,
 } from "lucide-react";
@@ -20,7 +22,7 @@ export default function Home() {
     <main className="site cinematic-bg">
       {/* =========================================================
           NAVIGATION
-         ========================================================= */}
+      ========================================================= */}
 
       <nav className="navbar" aria-label="Main navigation">
         <Link href="/" className="brand" aria-label="SALORA home">
@@ -34,7 +36,7 @@ export default function Home() {
           <a href="#intelligence">Intelligence</a>
 
           <Link href="/login" className="nav-cta">
-            Staff login
+            Staff command center
             <ArrowRight size={13} />
           </Link>
         </div>
@@ -42,7 +44,7 @@ export default function Home() {
 
       {/* =========================================================
           HERO
-         ========================================================= */}
+      ========================================================= */}
 
       <section className="hero">
         <div className="hero-content">
@@ -59,7 +61,7 @@ export default function Home() {
 
           <p className="hero-copy">
             SALORA helps independent salons decide whether a walk-in can be
-            accepted safely — before one new booking creates a chain reaction
+            accepted safely before one new service creates a chain reaction
             across the rest of the day.
           </p>
 
@@ -70,58 +72,51 @@ export default function Home() {
             </Link>
 
             <a href="#engine" className="hero-secondary">
-              See how it works
+              See the decision engine
               <ChevronRight size={16} />
             </a>
           </div>
 
           <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              marginTop: 27,
-              color: "#8f877e",
-              fontSize: 9,
-            }}
+            className="hero-process"
+            aria-label="SALORA decision process"
           >
-            <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <CheckCircle2 size={14} color="#65c895" />
+            <span className="hero-process-active">
+              <CheckCircle2 size={14} />
               Predict
             </span>
 
-            <span style={{ color: "#4e463d" }}>→</span>
+            <span className="hero-process-arrow">→</span>
 
             <span>Recommend</span>
 
-            <span style={{ color: "#4e463d" }}>→</span>
+            <span className="hero-process-arrow">→</span>
 
             <span>Act</span>
           </div>
 
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 7,
-              marginTop: 19,
-              color: "#6f675f",
-              fontSize: 8,
-            }}
-          >
+          <div className="hero-live">
             <span className="live-pulse" />
-            Built for real-time salon operations
+            Built around real-time salon operations
           </div>
         </div>
 
         {/* =====================================================
             HERO DECISION VISUAL
-           ===================================================== */}
+        ===================================================== */}
 
         <div className="hero-visual">
-          <div className="hero-card">
+          <div className="hero-card hero-card-premium">
             <div className="hero-card-head">
-              <span>SALORA / DECISION ENGINE</span>
+              <div>
+                <span className="hero-card-label">
+                  SALORA / DECISION ENGINE
+                </span>
+
+                <span className="hero-card-caption">
+                  Live operational simulation
+                </span>
+              </div>
 
               <span className="live-pill">
                 <span className="status-dot" />
@@ -130,73 +125,66 @@ export default function Home() {
             </div>
 
             <div className="hero-engine">
-              <small>WHAT IF WE ACCEPT THIS WALK-IN?</small>
+              <div className="engine-question">
+                <span>WHAT IF WE ACCEPT THIS WALK-IN?</span>
+                <span className="engine-live-line" />
+              </div>
 
               <h3>Test it first.</h3>
 
               <p>
-                SALORA evaluates the current schedule before a receptionist
-                commits the appointment.
+                SALORA evaluates candidate placements against the current
+                schedule then explains the operational consequence.
               </p>
 
               <div className="hero-flow">
-                <div className="hero-flow-item">
-                  <div className="hero-flow-number">01</div>
-
-                  <div>
-                    <strong>Walk-in request</strong>
-                    <span>Hair Color · 120 min · ₹1,800</span>
-                  </div>
-                </div>
+                <HeroFlow
+                  number="01"
+                  title="Walk-in request"
+                  description="Service request captured"
+                />
 
                 <div className="hero-flow-arrow" />
 
-                <div className="hero-flow-item">
-                  <div className="hero-flow-number">02</div>
-
-                  <div>
-                    <strong>Schedule simulation</strong>
-                    <span>Candidate placements evaluated</span>
-                  </div>
-                </div>
+                <HeroFlow
+                  number="02"
+                  title="Schedule simulation"
+                  description="Candidate placements evaluated"
+                />
 
                 <div className="hero-flow-arrow" />
 
-                <div className="hero-flow-item">
-                  <div className="hero-flow-number">03</div>
-
-                  <div>
-                    <strong>Downstream impact</strong>
-                    <span>Delay · wait · affected appointments</span>
-                  </div>
-                </div>
+                <HeroFlow
+                  number="03"
+                  title="Cascade analysis"
+                  description="Delay · wait · affected bookings"
+                />
 
                 <div className="hero-flow-arrow" />
 
-                <div
-                  className="hero-flow-item"
-                  style={{
-                    borderColor: "#35694f",
-                    background: "#142019",
-                  }}
-                >
-                  <div
-                    className="hero-flow-number"
-                    style={{
-                      background: "#193426",
-                      color: "#65c895",
-                    }}
-                  >
+                <div className="hero-flow-item hero-flow-success">
+                  <div className="hero-flow-number success-number">
                     <Check size={13} />
                   </div>
 
                   <div>
-                    <strong style={{ color: "#75d9a4" }}>
-                      SAFE TO ACCEPT
-                    </strong>
-
-                    <span>No downstream delay detected</span>
+                    <strong>SAFE TO ACCEPT</strong>
+                    <span>
+                      Recommendation generated from live state
+                    </span>
                   </div>
+                </div>
+              </div>
+
+              <div className="hero-simulation-bar">
+                <div className="simulation-bar-top">
+                  <span>SIMULATION COMPLETE</span>
+                  <span>DECISION READY</span>
+                </div>
+
+                <div className="simulation-track">
+                  <span className="simulation-fill" />
+                  <span className="simulation-marker" />
                 </div>
               </div>
             </div>
@@ -206,54 +194,29 @@ export default function Home() {
 
       {/* =========================================================
           CAPABILITY STRIP
-         ========================================================= */}
+      ========================================================= */}
 
       <section
-        style={{
-          borderTop: "1px solid rgba(255,255,255,0.06)",
-          borderBottom: "1px solid rgba(255,255,255,0.06)",
-          overflow: "hidden",
-          background: "rgba(0,0,0,0.14)",
-        }}
+        className="capability-strip"
         aria-label="SALORA capabilities"
       >
-        <div
-          style={{
-            width: "min(1180px, calc(100% - 40px))",
-            minHeight: 66,
-            margin: "0 auto",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 25,
-            overflow: "hidden",
-            color: "#625b52",
-            font: '800 7px "Manrope", sans-serif',
-            letterSpacing: "1.7px",
-            whiteSpace: "nowrap",
-          }}
-        >
-          <span>WALK-INS</span>
-          <i>•</i>
-          <span>SCHEDULES</span>
-          <i>•</i>
-          <span>CAPACITY</span>
-          <i>•</i>
-          <span>CASCADE IMPACT</span>
-          <i>•</i>
-          <span>REVENUE</span>
-          <i>•</i>
-          <span>DECISIONS</span>
+        <div className="capability-inner">
+          <Capability label="WALK-INS" />
+          <Capability label="LIVE SCHEDULE" />
+          <Capability label="CAPACITY" />
+          <Capability label="CASCADE IMPACT" />
+          <Capability label="REVENUE" />
+          <Capability label="DECISIONS" />
         </div>
       </section>
 
       {/* =========================================================
           DIFFERENCE
-         ========================================================= */}
+      ========================================================= */}
 
       <section id="how" className="section section-dark">
         <div className="container">
-          <div className="section-heading">
+          <div className="section-heading section-heading-wide">
             <div className="eyebrow">
               <Sparkles size={11} />
               THE SALORA DIFFERENCE
@@ -262,22 +225,20 @@ export default function Home() {
             <h2>
               A calendar shows
               <br />
-              <em style={{ color: "var(--gold)", fontStyle: "normal" }}>
-                what is booked.
-              </em>
+              <em>what is booked.</em>
               <br />
               SALORA shows what happens next.
             </h2>
 
             <p>
-              Independent salons operate with finite chairs, stylist
-              availability and constantly changing demand. SALORA turns that
-              moving operational state into a decision the front desk can act
-              on.
+              A salon&apos;s schedule is not static. Customers arrive early
+              or late, services take different amounts of time and walk-ins
+              appear without warning. SALORA turns that changing operational
+              state into a decision the front desk can actually use.
             </p>
           </div>
 
-          <div className="story-grid">
+          <div className="story-grid story-grid-three">
             <Feature
               n="01"
               icon={<CalendarClock />}
@@ -289,7 +250,7 @@ export default function Home() {
               n="02"
               icon={<BrainCircuit />}
               title="Simulate the what-if"
-              text="Candidate placements are tested before acceptance so downstream consequences are visible before they happen."
+              text="Possible placements are tested before acceptance so downstream consequences become visible before they happen."
             />
 
             <Feature
@@ -304,275 +265,160 @@ export default function Home() {
 
       {/* =========================================================
           DECISION ENGINE
-         ========================================================= */}
+      ========================================================= */}
 
-      <section id="engine" className="section">
+      <section id="engine" className="section engine-section">
         <div className="container">
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "0.8fr 1.2fr",
-              gap: 65,
-              alignItems: "center",
-            }}
-          >
+          <div className="engine-intro">
             <div>
               <div className="eyebrow">
                 <Sparkles size={12} />
                 THE SIGNATURE FEATURE
               </div>
 
-              <h2
-                style={{
-                  margin: "15px 0",
-                  font: '600 clamp(42px, 5vw, 68px) var(--font-serif)',
-                  lineHeight: 0.95,
-                  letterSpacing: "-2px",
-                }}
-              >
-                Don't guess.
+              <h2>
+                Don&apos;t guess.
                 <br />
-                <em
-                  style={{
-                    color: "var(--gold)",
-                    fontStyle: "normal",
-                  }}
-                >
-                  Simulate.
-                </em>
+                <em>Simulate.</em>
               </h2>
 
-              <p
-                style={{
-                  maxWidth: 500,
-                  color: "var(--muted)",
-                  fontSize: 12,
-                  lineHeight: 1.75,
-                }}
-              >
-                A walk-in request should not be a yes-or-no guess. SALORA tests
-                the schedule first then gives the front desk a clear
-                operational recommendation.
+              <p>
+                The question is simple:{" "}
+                <strong>what happens if we say yes?</strong>
               </p>
 
-              <div
-                style={{
-                  display: "grid",
-                  gap: 10,
-                  marginTop: 28,
-                }}
-              >
-                <Decision
-                  color="green"
-                  icon={<Check size={13} />}
-                  title="ACCEPT"
-                  text="Immediate placement with no scheduled customer delay."
-                />
+              <p className="engine-intro-copy">
+                SALORA tests the request against the current operational state
+                and ranks possible placements. Instead of asking the
+                receptionist to manually calculate the consequences, the
+                system provides a clear recommendation.
+              </p>
 
-                <Decision
-                  color="amber"
-                  icon={<Target size={13} />}
-                  title="ACCEPT WITH WARNING"
-                  text="Feasible placement with a controlled downstream impact."
-                />
+              <Link href="/login" className="text-link">
+                Open the command center
+                <ArrowRight size={14} />
+              </Link>
+            </div>
 
-                <Decision
-                  color="wait"
-                  icon={<Clock3 size={13} />}
-                  title="WAIT"
-                  text="Protect the schedule by offering a later safe window."
-                />
+            {/* Decision states */}
 
-                <Decision
-                  color="red"
-                  icon={<ShieldCheck size={13} />}
-                  title="RESCHEDULE"
-                  text="No safe placement satisfies the current constraints."
-                />
+            <div className="decision-state-list">
+              <Decision
+                color="green"
+                icon={<Check size={13} />}
+                title="ACCEPT"
+                text="Immediate placement with no scheduled customer delay."
+              />
+
+              <Decision
+                color="amber"
+                icon={<Target size={13} />}
+                title="ACCEPT WITH WARNING"
+                text="Feasible placement with a controlled downstream impact."
+              />
+
+              <Decision
+                color="wait"
+                icon={<Clock3 size={13} />}
+                title="WAIT"
+                text="Protect the schedule by offering a later safe window."
+              />
+
+              <Decision
+                color="red"
+                icon={<ShieldCheck size={13} />}
+                title="RESCHEDULE"
+                text="No safe placement satisfies the current constraints."
+              />
+            </div>
+          </div>
+
+          {/* =====================================================
+              SIMULATION THEATER
+          ===================================================== */}
+
+          <div className="simulation-theater">
+            <div className="theater-header">
+              <div>
+                <span className="theater-kicker">
+                  WHAT-IF SCHEDULE THEATER
+                </span>
+
+                <h3>See the consequence before committing.</h3>
+              </div>
+
+              <div className="theater-status">
+                <span className="status-dot" />
+                DETERMINISTIC ENGINE
               </div>
             </div>
 
-            {/* =================================================
-                SIMULATION PREVIEW
-               ================================================= */}
+            <div className="theater-body">
+              <div className="theater-request">
+                <div className="request-icon">
+                  <Users size={17} />
+                </div>
 
-            <div className="hero-card" style={{ width: "100%" }}>
-              <div className="hero-card-head">
-                <span>SIMULATION THEATER</span>
+                <div>
+                  <span>WALK-IN REQUEST</span>
+                  <strong>Service request</strong>
+                  <small>
+                    Duration and service value evaluated
+                  </small>
+                </div>
 
-                <span className="live-pill">
-                  <span className="status-dot" />
-                  DETERMINISTIC
-                </span>
+                <div className="request-tag">WHAT IF?</div>
               </div>
 
-              <div style={{ padding: 23 }}>
-                <div
-                  style={{
-                    color: "#817970",
-                    font: '700 7px var(--font-display)',
-                    letterSpacing: "1.2px",
-                  }}
-                >
-                  WHAT HAPPENS IF WE SAY YES?
+              <div className="theater-grid">
+                <div className="theater-labels">
+                  <span>STYLIST</span>
+                  <span>TIME</span>
                 </div>
 
-                <h3
-                  style={{
-                    margin: "10px 0 6px",
-                    font: '800 25px var(--font-display)',
-                  }}
-                >
-                  Hair Color · ₹1,800
-                </h3>
+                <TheaterRow
+                  stylist="Stylist"
+                  role="Existing appointment"
+                  start="CURRENT"
+                  end="NEXT"
+                  booked
+                />
 
-                <p
-                  style={{
-                    margin: 0,
-                    color: "#70685f",
-                    fontSize: 8,
-                  }}
-                >
-                  120 min service · simulated before commitment
-                </p>
+                <TheaterRow
+                  stylist="SALORA"
+                  role="Simulated walk-in"
+                  start="SAFE"
+                  end="WINDOW"
+                  simulated
+                />
 
-                <div
-                  style={{
-                    marginTop: 22,
-                    border: "1px solid #dfe4e0",
-                    borderRadius: 13,
-                    padding: 15,
-                    background: "#f7f8f6",
-                    color: "#17201b",
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "65px 1fr",
-                      gap: 8,
-                      marginBottom: 10,
-                      color: "#929a95",
-                      font: '600 6px var(--font-display)',
-                    }}
-                  >
-                    <span />
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                      }}
-                    >
-                      <span>4 PM</span>
-                      <span>5 PM</span>
-                      <span>6 PM</span>
-                      <span>7 PM</span>
-                    </div>
-                  </div>
+                <TheaterRow
+                  stylist="Stylist"
+                  role="Downstream appointment"
+                  start="NEXT"
+                  end="LATER"
+                  booked
+                />
+              </div>
 
-                  <PreviewRow
-                    name="Ananya"
-                    service="Haircut"
-                    time="04:04"
-                  />
-
-                  <PreviewRow
-                    name="SALORA"
-                    service="Walk-in · Hair Color"
-                    time="05:20"
-                    simulated
-                  />
-
-                  <PreviewRow
-                    name="Ananya"
-                    service="Color"
-                    time="06:04"
-                  />
+              <div className="theater-impact">
+                <div className="impact-icon">
+                  <CheckCircle2 size={20} />
                 </div>
 
-                <div
-                  style={{
-                    marginTop: 11,
-                    padding: 14,
-                    display: "grid",
-                    gridTemplateColumns: "auto 1fr auto",
-                    gap: 11,
-                    alignItems: "center",
-                    border: "1px solid #35694f",
-                    borderRadius: 12,
-                    background: "#142019",
-                  }}
-                >
-                  <div
-                    style={{
-                      width: 36,
-                      height: 36,
-                      display: "grid",
-                      placeItems: "center",
-                      borderRadius: "50%",
-                      background: "#dff5e7",
-                      color: "#178654",
-                    }}
-                  >
-                    <CheckCircle2 size={19} />
-                  </div>
-
-                  <div>
-                    <small
-                      style={{
-                        display: "block",
-                        color: "#6e9e82",
-                        font: '800 6px var(--font-display)',
-                        letterSpacing: "1px",
-                      }}
-                    >
-                      ENGINE OUTPUT
-                    </small>
-
-                    <strong
-                      style={{
-                        display: "block",
-                        marginTop: 3,
-                        color: "#fff",
-                        font: '800 14px var(--font-display)',
-                      }}
-                    >
-                      ACCEPT
-                    </strong>
-
-                    <span
-                      style={{
-                        display: "block",
-                        marginTop: 3,
-                        color: "#829589",
-                        fontSize: 7,
-                      }}
-                    >
-                      Immediate placement · 0 min delay
-                    </span>
-                  </div>
-
-                  <strong
-                    style={{
-                      color: "var(--gold)",
-                      font: '800 16px var(--font-display)',
-                    }}
-                  >
-                    ₹1,800
-                  </strong>
+                <div className="impact-copy">
+                  <span>ENGINE RECOMMENDATION</span>
+                  <strong>DECISION READY</strong>
+                  <small>
+                    The engine explains whether the request can be accepted
+                    safely.
+                  </small>
                 </div>
 
-                <Link
-                  href="/login"
-                  className="primary-btn"
-                  style={{
-                    width: "100%",
-                    marginTop: 11,
-                  }}
-                >
-                  Run this for your salon
-                  <ArrowRight size={14} />
-                </Link>
+                <div className="impact-value">
+                  <span>DECISION BASIS</span>
+                  <strong>LIVE STATE</strong>
+                </div>
               </div>
             </div>
           </div>
@@ -581,42 +427,40 @@ export default function Home() {
 
       {/* =========================================================
           INTELLIGENCE
-         ========================================================= */}
+      ========================================================= */}
 
       <section id="intelligence" className="section section-dark">
         <div className="container">
           <div className="section-heading">
-            <div className="eyebrow">OPERATIONAL INTELLIGENCE</div>
+            <div className="eyebrow">
+              <Sparkles size={11} />
+              OPERATIONAL INTELLIGENCE
+            </div>
 
             <h2>
               One decision.
               <br />
-              <em
-                style={{
-                  color: "var(--gold)",
-                  fontStyle: "normal",
-                }}
-              >
-                Four layers of context.
-              </em>
+              <em>Multiple layers of context.</em>
             </h2>
 
             <p>
-              SALORA connects the immediate walk-in decision with the
-              operational state surrounding it.
+              SALORA does not stop at finding an empty slot. It evaluates the
+              operational consequences surrounding that slot.
             </p>
           </div>
 
-          <div className="feature-grid">
+          <div className="feature-grid intelligence-grid-premium">
             <IntelligenceCard
               icon={<Target />}
+              number="01"
               title="Capacity"
               label="LIVE STATE"
-              text="Understand how much room remains in the current schedule before adding another service."
+              text="Understand how much room remains in the current schedule before another service is introduced."
             />
 
             <IntelligenceCard
               icon={<GitBranch />}
+              number="02"
               title="Cascade"
               label="WHAT-IF IMPACT"
               text="See whether one new service creates downstream pressure across later appointments."
@@ -624,16 +468,34 @@ export default function Home() {
 
             <IntelligenceCard
               icon={<Clock3 />}
+              number="03"
               title="Timing"
               label="BEST WINDOW"
               text="Compare candidate start times instead of accepting the first apparently open slot."
             />
 
             <IntelligenceCard
-              icon={<Zap />}
+              icon={<TrendingUp />}
+              number="04"
               title="Opportunity"
               label="DECISION VALUE"
               text="Put service value beside operational risk so the trade-off is visible."
+            />
+
+            <IntelligenceCard
+              icon={<ShieldCheck />}
+              number="05"
+              title="Protection"
+              label="CONSTRAINTS"
+              text="Protect existing appointments with skill, buffer, overlap, wait and delay constraints."
+            />
+
+            <IntelligenceCard
+              icon={<Zap />}
+              number="06"
+              title="Action"
+              label="OPERATIONAL RESPONSE"
+              text="Move from recommendation to a controlled acceptance action without losing the audit trail."
             />
           </div>
         </div>
@@ -641,135 +503,88 @@ export default function Home() {
 
       {/* =========================================================
           DECISION LOOP
-         ========================================================= */}
+      ========================================================= */}
 
-      <section className="section">
+      <section className="section decision-loop-section">
         <div className="container">
           <div className="section-heading">
-            <div className="eyebrow">THE DECISION LOOP</div>
+            <div className="eyebrow">
+              <Sparkles size={11} />
+              THE DECISION LOOP
+            </div>
 
             <h2>
               From a walk-in request
               <br />
-              to a confident{" "}
-              <em
-                style={{
-                  color: "var(--gold)",
-                  fontStyle: "normal",
-                }}
-              >
-                yes.
-              </em>
+              to a confident <em>yes.</em>
             </h2>
 
             <p>
-              No guesswork. No manual schedule juggling. Just a repeatable
-              decision workflow.
+              A repeatable workflow designed for the person standing behind
+              the front desk.
             </p>
           </div>
 
-          <div className="story-grid">
-            <FlowStep
+          <div className="decision-loop">
+            <LoopStep
               number="01"
               title="Request"
-              text="A customer arrives without an appointment."
+              text="Capture the walk-in service and customer requirement."
             />
 
-            <FlowStep
+            <LoopConnector />
+
+            <LoopStep
               number="02"
               title="Simulate"
-              text="SALORA tests possible placements against the live schedule."
+              text="Evaluate candidate placements against the live schedule."
             />
 
-            <FlowStep
+            <LoopConnector />
+
+            <LoopStep
               number="03"
               title="Understand"
-              text="The engine explains delay, wait, impact and value."
+              text="See delay, wait, affected appointments and service value."
             />
-          </div>
 
-          <div style={{ maxWidth: 380, marginTop: 13 }}>
-            <FlowStep
+            <LoopConnector />
+
+            <LoopStep
               number="04"
               title="Act"
-              text="The receptionist accepts a safe option or chooses another path."
+              text="Accept a safe option or choose a safer alternative."
+              active
             />
           </div>
         </div>
       </section>
 
       {/* =========================================================
-          POSITIONING
-         ========================================================= */}
+          PRODUCT PRINCIPLE
+      ========================================================= */}
 
       <section className="section section-dark">
         <div className="container">
-          <div
-            style={{
-              padding: "38px 40px",
-              display: "grid",
-              gridTemplateColumns: "auto 1fr auto",
-              gap: 25,
-              alignItems: "center",
-              border: "1px solid #493b2b",
-              borderRadius: 20,
-              background:
-                "linear-gradient(135deg, #21180f, #110d09)",
-              boxShadow: "var(--shadow-lg)",
-            }}
-          >
-            <div
-              style={{
-                width: 47,
-                height: 47,
-                display: "grid",
-                placeItems: "center",
-                border: "1px solid #5c4930",
-                borderRadius: 13,
-                background: "#241b11",
-                color: "var(--gold)",
-              }}
-            >
-              <Sparkles size={19} />
+          <div className="principle-panel">
+            <div className="principle-mark">
+              <Sparkles size={20} />
             </div>
 
-            <div>
-              <span
-                style={{
-                  color: "var(--gold)",
-                  font: '800 7px var(--font-display)',
-                  letterSpacing: "1.5px",
-                }}
-              >
-                DESIGNED FOR INDEPENDENT SALONS
-              </span>
+            <div className="principle-copy">
+              <span>THE SALORA PRINCIPLE</span>
 
-              <h2
-                style={{
-                  margin: "9px 0 8px",
-                  font: '600 clamp(25px, 3vw, 39px) var(--font-serif)',
-                  lineHeight: 1,
-                }}
-              >
-                More than a calendar.
+              <h2>
+                Every &quot;yes&quot; should be
                 <br />
-                Less chaos behind the desk.
+                an informed decision.
               </h2>
 
-              <p
-                style={{
-                  maxWidth: 650,
-                  margin: 0,
-                  color: "#82796f",
-                  fontSize: 9,
-                  lineHeight: 1.7,
-                }}
-              >
-                SALORA is built around one operational question:
-                <strong style={{ color: "#c8bfb4" }}>
-                  {" "}
-                  can we accept this customer without creating a problem for
-                  someone already booked?
+              <p>
+                The goal is not to accept every walk-in. The goal is to know
+                which ones can be accepted{" "}
+                <strong>
+                  without creating a problem for someone already booked.
                 </strong>
               </p>
             </div>
@@ -783,8 +598,44 @@ export default function Home() {
       </section>
 
       {/* =========================================================
+          FINAL CTA
+      ========================================================= */}
+
+      <section className="section final-cta-section">
+        <div className="container">
+          <div className="final-cta">
+            <div className="final-orbit orbit-one" />
+            <div className="final-orbit orbit-two" />
+
+            <div className="final-cta-content">
+              <div className="eyebrow">
+                <Sparkles size={11} />
+                SALORA
+              </div>
+
+              <h2>
+                Stop guessing.
+                <br />
+                <em>Start flowing.</em>
+              </h2>
+
+              <p>
+                Turn the next walk-in from a scheduling question into an
+                evidence-backed operational decision.
+              </p>
+
+              <Link href="/login" className="hero-primary">
+                Open SALORA
+                <ArrowRight size={16} />
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* =========================================================
           FOOTER
-         ========================================================= */}
+      ========================================================= */}
 
       <footer className="footer">
         <div className="footer-inner">
@@ -800,6 +651,7 @@ export default function Home() {
           <div className="footer-links">
             <a href="#engine">Decision Engine</a>
             <a href="#how">How it works</a>
+            <a href="#intelligence">Intelligence</a>
 
             <Link href="/login">
               Staff command center
@@ -807,14 +659,57 @@ export default function Home() {
             </Link>
           </div>
         </div>
+
+        <div className="footer-bottom">
+          <span>Built for independent salon operations.</span>
+          <span>Predict · Recommend · Act</span>
+        </div>
       </footer>
     </main>
   );
 }
 
 /* =============================================================
+   HERO FLOW
+============================================================= */
+
+function HeroFlow({
+  number,
+  title,
+  description,
+}: {
+  number: string;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="hero-flow-item">
+      <div className="hero-flow-number">{number}</div>
+
+      <div>
+        <strong>{title}</strong>
+        <span>{description}</span>
+      </div>
+    </div>
+  );
+}
+
+/* =============================================================
+   CAPABILITY
+============================================================= */
+
+function Capability({ label }: { label: string }) {
+  return (
+    <>
+      <span>{label}</span>
+      <i>•</i>
+    </>
+  );
+}
+
+/* =============================================================
    FEATURE
-   ============================================================= */
+============================================================= */
 
 function Feature({
   n,
@@ -828,41 +723,29 @@ function Feature({
   text: string;
 }) {
   return (
-    <article className="story-card">
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
+    <article className="story-card premium-story-card">
+      <div className="story-card-top">
         <span className="story-number">{n}</span>
 
-        <div
-          style={{
-            width: 36,
-            height: 36,
-            display: "grid",
-            placeItems: "center",
-            borderRadius: 9,
-            background: "rgba(212,175,55,0.08)",
-            color: "var(--gold)",
-          }}
-        >
-          {icon}
-        </div>
+        <div className="story-icon">{icon}</div>
       </div>
+
+      <div className="story-card-line" />
 
       <h3>{title}</h3>
 
       <p>{text}</p>
+
+      <span className="story-card-arrow">
+        <ArrowRight size={13} />
+      </span>
     </article>
   );
 }
 
 /* =============================================================
    DECISION
-   ============================================================= */
+============================================================= */
 
 function Decision({
   color,
@@ -904,24 +787,15 @@ function Decision({
 
   return (
     <div
+      className={`decision-card decision-${color}`}
       style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 11,
-        padding: 11,
-        border: `1px solid ${palette.border}`,
-        borderRadius: 11,
+        borderColor: palette.border,
         background: palette.bg,
       }}
     >
       <div
+        className="decision-icon"
         style={{
-          width: 32,
-          height: 32,
-          flex: "none",
-          display: "grid",
-          placeItems: "center",
-          borderRadius: "50%",
           background: palette.iconBg,
           color: palette.icon,
         }}
@@ -930,149 +804,142 @@ function Decision({
       </div>
 
       <div>
-        <strong
-          style={{
-            display: "block",
-            color: "#eee8df",
-            font: '800 8px var(--font-display)',
-          }}
-        >
-          {title}
-        </strong>
-
-        <span
-          style={{
-            display: "block",
-            marginTop: 3,
-            color: "#817970",
-            fontSize: 7,
-            lineHeight: 1.45,
-          }}
-        >
-          {text}
-        </span>
+        <strong>{title}</strong>
+        <span>{text}</span>
       </div>
+
+      <ChevronRight size={13} className="decision-chevron" />
     </div>
   );
 }
 
 /* =============================================================
    INTELLIGENCE CARD
-   ============================================================= */
+============================================================= */
 
 function IntelligenceCard({
   icon,
+  number,
   title,
   label,
   text,
 }: {
   icon: ReactNode;
+  number: string;
   title: string;
   label: string;
   text: string;
 }) {
   return (
-    <article className="feature-card">
-      <div className="feature-icon">{icon}</div>
+    <article className="feature-card intelligence-card-premium">
+      <div className="feature-card-head">
+        <div className="feature-icon">{icon}</div>
+        <span>{number}</span>
+      </div>
 
-      <span
-        style={{
-          display: "block",
-          marginTop: 17,
-          color: "var(--gold)",
-          font: '800 6px var(--font-display)',
-          letterSpacing: "1.2px",
-        }}
-      >
-        {label}
-      </span>
+      <div className="feature-card-label">{label}</div>
 
       <h3>{title}</h3>
 
       <p>{text}</p>
+
+      <div className="feature-card-line" />
     </article>
   );
 }
 
 /* =============================================================
-   FLOW STEP
-   ============================================================= */
+   THEATER ROW
+============================================================= */
 
-function FlowStep({
+function TheaterRow({
+  stylist,
+  role,
+  start,
+  end,
+  simulated = false,
+  booked = false,
+}: {
+  stylist: string;
+  role: string;
+  start: string;
+  end: string;
+  simulated?: boolean;
+  booked?: boolean;
+}) {
+  return (
+    <div
+      className={`theater-row ${
+        simulated ? "theater-row-simulated" : ""
+      }`}
+    >
+      <div className="theater-stylist">
+        <div className="theater-avatar">
+          {simulated ? <Sparkles size={11} /> : stylist.charAt(0)}
+        </div>
+
+        <div>
+          <strong>{stylist}</strong>
+          <span>{role}</span>
+        </div>
+      </div>
+
+      <div className="theater-time">
+        <span>{start}</span>
+
+        <div className="theater-duration">
+          <span />
+        </div>
+
+        <span>{end}</span>
+      </div>
+
+      <div
+        className={`theater-badge ${
+          simulated ? "simulated-badge" : booked ? "booked-badge" : ""
+        }`}
+      >
+        {simulated ? "SIMULATED" : "BOOKED"}
+      </div>
+    </div>
+  );
+}
+
+/* =============================================================
+   LOOP STEP
+============================================================= */
+
+function LoopStep({
   number,
   title,
   text,
+  active = false,
 }: {
   number: string;
   title: string;
   text: string;
+  active?: boolean;
 }) {
   return (
-    <article className="story-card">
-      <span className="story-number">{number}</span>
+    <div className={`loop-step ${active ? "loop-step-active" : ""}`}>
+      <div className="loop-number">{number}</div>
 
-      <h3>{title}</h3>
-
-      <p>{text}</p>
-    </article>
+      <div>
+        <h3>{title}</h3>
+        <p>{text}</p>
+      </div>
+    </div>
   );
 }
 
 /* =============================================================
-   TIMELINE PREVIEW
-   ============================================================= */
+   LOOP CONNECTOR
+============================================================= */
 
-function PreviewRow({
-  name,
-  service,
-  time,
-  simulated = false,
-}: {
-  name: string;
-  service: string;
-  time: string;
-  simulated?: boolean;
-}) {
+function LoopConnector() {
   return (
-    <div
-      style={{
-        minHeight: 46,
-        display: "grid",
-        gridTemplateColumns: "47px 1fr auto",
-        alignItems: "center",
-        gap: 8,
-        borderTop: "1px solid #e1e6e2",
-      }}
-    >
-      <span
-        style={{
-          color: "#858e89",
-          font: '600 6px var(--font-display)',
-        }}
-      >
-        {time}
-      </span>
-
-      <strong
-        style={{
-          color: simulated ? "#55420e" : "#36423b",
-          font: '800 7px var(--font-display)',
-        }}
-      >
-        {name} · {service}
-      </strong>
-
-      <span
-        style={{
-          padding: "4px 6px",
-          borderRadius: 5,
-          background: simulated ? "#eadb8e" : "#e5e9e6",
-          color: simulated ? "#66500d" : "#7a837e",
-          font: '800 5px var(--font-display)',
-        }}
-      >
-        {simulated ? "SIMULATED" : "BOOKED"}
-      </span>
+    <div className="loop-connector" aria-hidden="true">
+      <ArrowRight size={14} />
     </div>
   );
 }
