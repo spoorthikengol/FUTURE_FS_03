@@ -6,6 +6,7 @@ import {
   useEffect,
   useState,
 } from "react";
+import type { CSSProperties } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -17,11 +18,30 @@ import {
   KeyRound,
   LockKeyhole,
   ShieldCheck,
-  Sparkles,
   Wifi,
   WifiOff,
   Zap,
 } from "lucide-react";
+
+import styles from "./page.module.css";
+
+/* ------------------------------------------------------------------ */
+/* Fonts — local/system stacks only. No next/font/google, no network   */
+/* request at build or runtime. Sets the same --font-display /         */
+/* --font-body custom properties that page.module.css already expects, */
+/* just with literal values instead of a Google-hosted font.           */
+/* ------------------------------------------------------------------ */
+
+const fontVariables = {
+  "--font-display":
+    "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Times New Roman', serif",
+  "--font-body":
+    "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+} as CSSProperties;
+
+/* ------------------------------------------------------------------ */
+/* Decision states                                                     */
+/* ------------------------------------------------------------------ */
 
 type DecisionState =
   | "ACCEPT"
@@ -56,20 +76,13 @@ const decisionStates: {
   },
 ];
 
-function decisionClass(state: DecisionState) {
-  switch (state) {
-    case "ACCEPT":
-      return "accept";
+function decisionNodeClass(state: DecisionState, active: boolean) {
+  const classes = [styles.decisionNode];
 
-    case "ACCEPT_WITH_WARNING":
-      return "warning";
+  if (active) classes.push(styles.decisionNodeActive);
+  if (state === "RESCHEDULE") classes.push(styles.decisionNodeReschedule);
 
-    case "WAIT":
-      return "wait";
-
-    case "RESCHEDULE":
-      return "reschedule";
-  }
+  return classes.join(" ");
 }
 
 export default function Login() {
@@ -127,30 +140,21 @@ export default function Login() {
 
     window.addEventListener("keydown", handleEscape);
 
-    return () =>
-      window.removeEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
   }, []);
 
-  function handlePasswordKeyDown(
-    event: KeyboardEvent<HTMLInputElement>,
-  ) {
+  function handlePasswordKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     setCapsLock(event.getModifierState("CapsLock"));
   }
 
-  function handlePasswordKeyUp(
-    event: KeyboardEvent<HTMLInputElement>,
-  ) {
+  function handlePasswordKeyUp(event: KeyboardEvent<HTMLInputElement>) {
     setCapsLock(event.getModifierState("CapsLock"));
   }
 
-  async function handleSubmit(
-    event: FormEvent<HTMLFormElement>,
-  ) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (busy) {
-      return;
-    }
+    if (busy) return;
 
     const cleanEmail = email.trim();
 
@@ -185,9 +189,7 @@ export default function Login() {
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        throw new Error(
-          data.error || "Unable to sign in.",
-        );
+        throw new Error(data.error || "Unable to sign in.");
       }
 
       router.push("/dashboard");
@@ -204,385 +206,250 @@ export default function Login() {
   }
 
   return (
-    <main className="auth-page">
-      {/* ------------------------------------------------------------------ */}
-      {/* Atmospheric background                                             */}
-      {/* ------------------------------------------------------------------ */}
-
-      <div
-        className="auth-background"
-        aria-hidden="true"
-      >
-        <div className="auth-light auth-light-one" />
-        <div className="auth-light auth-light-two" />
-        <div className="auth-grid" />
-        <div className="auth-grain" />
+    <main className={styles.page} style={fontVariables}>
+      {/* Atmosphere ------------------------------------------------- */}
+      <div className={styles.backdrop} aria-hidden="true">
+        <div className={styles.glow} />
+        <div className={styles.glowLow} />
+        <div className={styles.grid} />
       </div>
 
-      {/* ------------------------------------------------------------------ */}
-      {/* Navigation                                                         */}
-      {/* ------------------------------------------------------------------ */}
+      <div className={styles.shell}>
+        {/* Nav ------------------------------------------------------ */}
+        <nav className={styles.nav} aria-label="Authentication navigation">
+          <Link href="/" className={styles.brand} aria-label="SALORA home">
+            <span className={styles.brandMark} aria-hidden="true" />
+            <span>SALORA</span>
+          </Link>
 
-      <nav
-        className="auth-nav"
-        aria-label="Authentication navigation"
-      >
-        <Link
-          href="/"
-          className="auth-brand"
-          aria-label="SALORA home"
-        >
-          <span className="auth-brand-mark">
-            <span />
-            <span />
-          </span>
-
-          <span>SALORA</span>
-        </Link>
-
-        <div
-          className="auth-nav-status"
-          aria-label={
-            online
-              ? "Command center online"
-              : "Command center offline"
-          }
-        >
-          <span
-            className={`status-dot ${
-              online ? "" : "status-dot-offline"
-            }`}
-          />
-
-          {online
-            ? "Command center"
-            : "Connection interrupted"}
-        </div>
-      </nav>
-
-      {/* ------------------------------------------------------------------ */}
-      {/* Main authentication experience                                    */}
-      {/* ------------------------------------------------------------------ */}
-
-      <section className="auth-layout">
-        {/* ---------------------------------------------------------------- */}
-        {/* Brand story                                                      */}
-        {/* ---------------------------------------------------------------- */}
-
-        <div className="auth-story">
-          <div className="auth-kicker">
-            <Sparkles size={14} />
-            SALON INTELLIGENCE
+          <div
+            className={styles.navStatus}
+            aria-label={online ? "Command center online" : "Command center offline"}
+          >
+            <span
+              className={`${styles.statusDot} ${
+                online ? "" : styles.statusDotOffline
+              }`}
+            />
+            {online ? "Command center online" : "Connection interrupted"}
           </div>
+        </nav>
 
-          <h1>
-            Know before
-            <br />
-            <em>you say yes.</em>
-          </h1>
-
-          <p>
-            Make smarter walk-in decisions without putting
-            your booked customers at risk.
-          </p>
-
-          {/* Decision intelligence preview */}
-
-          <div className="auth-intelligence-preview">
-            <div className="auth-intelligence-top">
-              <div className="auth-intelligence-icon">
-                <BrainCircuit size={18} />
-              </div>
-
-              <div>
-                <span className="auth-intelligence-label">
-                  DECISION ENGINE
-                </span>
-
-                <strong>
-                  Predicting schedule impact
-                </strong>
-              </div>
-
-              <span className="auth-live-pill">
-                <span />
-                LIVE
-              </span>
+        {/* Main ------------------------------------------------------ */}
+        <section className={styles.layout}>
+          {/* Story ---------------------------------------------------- */}
+          <div className={styles.story}>
+            <div className={styles.kicker}>
+              <span className={styles.kickerDot} aria-hidden="true" />
+              Salon intelligence
             </div>
 
-            <div className="auth-decision-track">
-              {decisionStates.map((item) => {
-                const active =
-                  item.state === activeDecision;
+            <h1 className={styles.heading}>
+              Know before
+              <em>you say yes.</em>
+            </h1>
 
-                return (
-                  <div
-                    key={item.state}
-                    className={`auth-decision-node ${
-                      active ? "active" : ""
-                    } ${decisionClass(item.state)}`}
-                  >
-                    <span className="auth-decision-node-dot">
-                      {active && <span />}
+            <p className={styles.lead}>
+              Make smarter walk-in decisions without putting your booked
+              customers at risk.
+            </p>
+
+            <div className={styles.intelligence}>
+              <div className={styles.intelligenceTop}>
+                <div className={styles.intelligenceMeta}>
+                  <span className={styles.intelligenceIcon} aria-hidden="true">
+                    <BrainCircuit size={16} />
+                  </span>
+                  <div>
+                    <span className={styles.intelligenceLabel}>
+                      Decision engine
                     </span>
-
-                    <div>
-                      <strong>{item.label}</strong>
-                      <small>{item.description}</small>
-                    </div>
+                    <span className={styles.intelligenceTitle}>
+                      Predicting schedule impact
+                    </span>
                   </div>
-                );
-              })}
-            </div>
+                </div>
 
-            <div className="auth-intelligence-footer">
-              <Zap size={13} />
-              <span>
-                Simulate first. Commit only when the schedule
-                can handle it.
-              </span>
-            </div>
-          </div>
-
-          {/* Core product promise */}
-
-          <div className="auth-promise">
-            <div className="auth-promise-icon">
-              <CheckCircle2 size={18} />
-            </div>
-
-            <div>
-              <strong>
-                Predict → Recommend → Act
-              </strong>
-
-              <span>
-                Simulate the schedule impact before accepting
-                a walk-in.
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* ---------------------------------------------------------------- */}
-        {/* Login panel                                                      */}
-        {/* ---------------------------------------------------------------- */}
-
-        <div className="auth-panel">
-          <div className="auth-panel-glow" />
-
-          <div className="auth-panel-inner">
-            <div className="auth-panel-header">
-              <div>
-                <small>STAFF ACCESS</small>
-
-                <h2>Welcome back.</h2>
+                <span className={styles.livePill}>
+                  <span className={styles.livePillDot} aria-hidden="true" />
+                  Live
+                </span>
               </div>
 
               <div
-                className="auth-lock"
-                aria-hidden="true"
+                className={styles.decisionTrack}
+                role="group"
+                aria-label="Decision states"
               >
-                <LockKeyhole size={18} />
+                {decisionStates.map((item) => {
+                  const active = item.state === activeDecision;
+
+                  return (
+                    <div
+                      key={item.state}
+                      className={decisionNodeClass(item.state, active)}
+                      aria-current={active ? "true" : undefined}
+                    >
+                      <span className={styles.decisionNodeDot} aria-hidden="true">
+                        {active && <span className={styles.decisionNodeDotInner} />}
+                      </span>
+                      <div>
+                        <strong>{item.label}</strong>
+                        <small>{item.description}</small>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className={styles.intelligenceFooter}>
+                <Zap size={13} aria-hidden="true" />
+                <span>Simulate first. Commit only when the schedule can handle it.</span>
               </div>
             </div>
 
-            <p className="auth-panel-description">
-              Enter your credentials to open the salon
-              command center.
-            </p>
-
-            {/* Connection indicator */}
-
-            <div
-              className={`auth-connection ${
-                online
-                  ? "auth-connection-online"
-                  : "auth-connection-offline"
-              }`}
-              role="status"
-              aria-live="polite"
-            >
-              {online ? (
-                <Wifi size={14} />
-              ) : (
-                <WifiOff size={14} />
-              )}
-
-              <span>
-                {online
-                  ? "Secure connection ready"
-                  : "Waiting for network connection"}
+            <div className={styles.promise}>
+              <span className={styles.promiseIcon} aria-hidden="true">
+                <CheckCircle2 size={16} />
               </span>
-            </div>
-
-            <form
-              onSubmit={handleSubmit}
-              className="auth-form"
-              noValidate
-            >
-              {/* Email */}
-
-              <label className="auth-field">
-                <span>Email address</span>
-
-                <div className="auth-input-wrap">
-                  <input
-                    value={email}
-                    onChange={(event) =>
-                      setEmail(event.target.value)
-                    }
-                    type="email"
-                    autoComplete="email"
-                    placeholder="you@salon.com"
-                    required
-                    disabled={busy}
-                    aria-invalid={
-                      error ? "true" : "false"
-                  }
-                  />
-                </div>
-              </label>
-
-              {/* Password */}
-
-              <label className="auth-field">
-                <span>Password</span>
-
-                <div className="auth-input-wrap auth-password-wrap">
-                  <input
-                    value={password}
-                    onChange={(event) =>
-                      setPassword(event.target.value)
-                    }
-                    onKeyDown={handlePasswordKeyDown}
-                    onKeyUp={handlePasswordKeyUp}
-                    type={
-                      showPassword
-                        ? "text"
-                        : "password"
-                    }
-                    autoComplete="current-password"
-                    placeholder="Enter your password"
-                    required
-                    disabled={busy}
-                  />
-
-                  <button
-                    type="button"
-                    className="auth-password-toggle"
-                    onClick={() =>
-                      setShowPassword(
-                        (current) => !current,
-                      )
-                    }
-                    aria-label={
-                      showPassword
-                        ? "Hide password"
-                        : "Show password"
-                    }
-                    disabled={busy}
-                  >
-                    {showPassword ? (
-                      <EyeOff size={17} />
-                    ) : (
-                      <Eye size={17} />
-                    )}
-                  </button>
-                </div>
-
-                {capsLock && (
-                  <span
-                    className="auth-caps-warning"
-                    role="status"
-                  >
-                    <KeyRound size={13} />
-                    Caps Lock is on
-                  </span>
-                )}
-              </label>
-
-              {/* Error */}
-
-              {error && (
-                <div
-                  className="auth-error"
-                  role="alert"
-                  aria-live="assertive"
-                >
-                  <span />
-                  <div>
-                    <strong>Sign-in failed</strong>
-                    <p>{error}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Submit */}
-
-              <button
-                type="submit"
-                className={`auth-submit ${
-                  busy ? "auth-submit-busy" : ""
-                }`}
-                disabled={busy || !online}
-              >
-                <span>
-                  {busy
-                    ? "Opening command center…"
-                    : "Enter SALORA"}
-                </span>
-
-                {busy ? (
-                  <span
-                    className="auth-submit-spinner"
-                    aria-hidden="true"
-                  />
-                ) : (
-                  <ArrowRight size={17} />
-                )}
-              </button>
-            </form>
-
-            {/* Demo access */}
-
-            <div className="auth-demo">
-              <LockKeyhole size={14} />
-
-              <span>
-                Demo credentials are prefilled
-              </span>
-            </div>
-
-            {/* Security signal */}
-
-            <div className="auth-security">
-              <ShieldCheck size={15} />
-
-              <span>
-                Protected server-side staff session
-              </span>
-
-              <span className="auth-security-pulse">
-                <span />
-                Secure
-              </span>
+              <div>
+                <strong>Predict &rarr; Recommend &rarr; Act</strong>
+                <span>Simulate the schedule impact before accepting a walk-in.</span>
+              </div>
             </div>
           </div>
-        </div>
-      </section>
 
-      {/* ------------------------------------------------------------------ */}
-      {/* Footer                                                             */}
-      {/* ------------------------------------------------------------------ */}
+          {/* Login panel ------------------------------------------------ */}
+          <div className={styles.panel}>
+            <div className={styles.panelGlow} aria-hidden="true" />
 
-      <footer className="auth-footer">
-        <span>© 2026 SALORA</span>
+            <div className={styles.panelInner}>
+              <div className={styles.panelHeader}>
+                <div>
+                  <span className={styles.panelEyebrow}>Staff access</span>
+                  <h2 className={styles.panelHeading}>Welcome back.</h2>
+                </div>
+                <span className={styles.lock} aria-hidden="true">
+                  <LockKeyhole size={16} />
+                </span>
+              </div>
 
-        <span>
-          Real-time walk-in decision intelligence
-        </span>
-      </footer>
+              <p className={styles.panelDescription}>
+                Enter your credentials to open the salon command center.
+              </p>
+
+              <div
+                className={`${styles.connection} ${
+                  online ? styles.connectionOnline : styles.connectionOffline
+                }`}
+                role="status"
+                aria-live="polite"
+              >
+                {online ? <Wifi size={14} /> : <WifiOff size={14} />}
+                <span>
+                  {online ? "Secure connection ready" : "Waiting for network connection"}
+                </span>
+              </div>
+
+              <form onSubmit={handleSubmit} className={styles.form} noValidate>
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>Email address</span>
+                  <div className={styles.inputWrap}>
+                    <input
+                      className={styles.input}
+                      value={email}
+                      onChange={(event) => setEmail(event.target.value)}
+                      type="email"
+                      autoComplete="email"
+                      placeholder="you@salon.com"
+                      required
+                      disabled={busy}
+                      aria-invalid={error ? "true" : "false"}
+                    />
+                  </div>
+                </label>
+
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>Password</span>
+                  <div className={`${styles.inputWrap} ${styles.passwordWrap}`}>
+                    <input
+                      className={styles.input}
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      onKeyDown={handlePasswordKeyDown}
+                      onKeyUp={handlePasswordKeyUp}
+                      type={showPassword ? "text" : "password"}
+                      autoComplete="current-password"
+                      placeholder="Enter your password"
+                      required
+                      disabled={busy}
+                    />
+                    <button
+                      type="button"
+                      className={styles.passwordToggle}
+                      onClick={() => setShowPassword((current) => !current)}
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                      disabled={busy}
+                    >
+                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+
+                  {capsLock && (
+                    <span className={styles.capsWarning} role="status">
+                      <KeyRound size={13} />
+                      Caps Lock is on
+                    </span>
+                  )}
+                </label>
+
+                {error && (
+                  <div className={styles.errorBox} role="alert" aria-live="assertive">
+                    <span className={styles.errorDot} aria-hidden="true" />
+                    <div>
+                      <strong>Sign-in failed</strong>
+                      <p>{error}</p>
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  className={styles.submit}
+                  disabled={busy || !online}
+                >
+                  <span>{busy ? "Opening command center\u2026" : "Enter SALORA"}</span>
+                  {busy ? (
+                    <span className={styles.submitSpinner} aria-hidden="true" />
+                  ) : (
+                    <ArrowRight size={16} />
+                  )}
+                </button>
+              </form>
+
+              <div className={styles.demo}>
+                <LockKeyhole size={13} />
+                <span>Demo credentials are prefilled</span>
+              </div>
+
+              <div className={styles.security}>
+                <ShieldCheck size={14} />
+                <span>Protected server-side staff session</span>
+                <span className={styles.securityPulse}>
+                  <span className={styles.securityPulseDot} aria-hidden="true" />
+                  Secure
+                </span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Footer ------------------------------------------------------ */}
+        <footer className={styles.footer}>
+          <span>© 2026 SALORA</span>
+          <span>Real-time walk-in decision intelligence</span>
+        </footer>
+      </div>
     </main>
   );
 }

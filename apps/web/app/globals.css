@@ -5236,3 +5236,253 @@ textarea:focus-visible {
     transition: none;
   }
 }
+/* SALORA — cinematic ambient motion */
+
+.dashboard-shell {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.dashboard-shell::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -3;
+  background:
+    linear-gradient(
+      90deg,
+      rgba(10, 8, 6, 0.96) 0%,
+      rgba(15, 11, 8, 0.90) 45%,
+      rgba(12, 9, 7, 0.94) 100%
+    ),
+    url("/salora-dashboard-bg.jpg") center / cover no-repeat;
+  transform: scale(1.02);
+}
+
+.dashboard-shell::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      circle at 72% 18%,
+      rgba(212, 175, 55, 0.10),
+      transparent 28%
+    ),
+    radial-gradient(
+      circle at 18% 75%,
+      rgba(183, 142, 92, 0.07),
+      transparent 30%
+    );
+  animation: saloraAmbient 12s ease-in-out infinite alternate;
+}
+
+@keyframes saloraAmbient {
+  from {
+    opacity: 0.65;
+    transform: scale(1);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+}
+
+/* LIVE indicator */
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #b7d88a;
+  box-shadow: 0 0 0 0 rgba(183, 216, 138, 0.45);
+  animation: livePulse 2.2s ease-out infinite;
+}
+
+@keyframes livePulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(183, 216, 138, 0.45);
+  }
+
+  70% {
+    box-shadow: 0 0 0 8px rgba(183, 216, 138, 0);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgba(183, 216, 138, 0);
+  }
+}
+
+/* Premium card interaction */
+
+.dashboard-card {
+  transition:
+    transform 280ms cubic-bezier(.22, 1, .36, 1),
+    border-color 280ms ease,
+    background 280ms ease;
+}
+
+.dashboard-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(212, 175, 55, 0.32);
+}
+
+/* Gold hover sweep */
+
+.premium-button {
+  position: relative;
+  overflow: hidden;
+}
+
+.premium-button::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -120%;
+  width: 70%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255,255,255,.18),
+    transparent
+  );
+  transform: skewX(-18deg);
+  transition: left 700ms ease;
+}
+
+.premium-button:hover::after {
+  left: 140%;
+}
+
+/* Decision engine scanning line */
+
+.decision-engine {
+  position: relative;
+  overflow: hidden;
+}
+
+.decision-engine::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  top: 0;
+  background: rgba(212, 175, 55, 0.25);
+  opacity: 0;
+}
+
+.decision-engine.is-simulating::after {
+  opacity: 1;
+  animation: decisionScan 1.8s linear infinite;
+}
+
+@keyframes decisionScan {
+  from {
+    transform: translateY(0);
+  }
+
+  to {
+    transform: translateY(360px);
+  }
+}
+
+/* Timeline live marker */
+
+.timeline-live-marker {
+  animation: timelineLive 2s ease-in-out infinite;
+}
+
+@keyframes timelineLive {
+  0%,
+  100% {
+    opacity: .55;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Staggered entrance */
+
+.reveal {
+  animation: saloraReveal 650ms cubic-bezier(.22, 1, .36, 1) both;
+}
+
+.reveal:nth-child(2) {
+  animation-delay: 70ms;
+}
+
+.reveal:nth-child(3) {
+  animation-delay: 140ms;
+}
+
+.reveal:nth-child(4) {
+  animation-delay: 210ms;
+}
+
+@keyframes saloraReveal {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-shell::after,
+  .live-dot,
+  .reveal,
+  .decision-engine.is-simulating::after,
+  .timeline-live-marker {
+    animation: none !important;
+  }
+
+  .dashboard-card,
+  .premium-button::after {
+    transition: none !important;
+  }
+}
+/* SALORA CINEMATIC DASHBOARD BACKGROUND FIX */
+
+.dash-v2 {
+  position: relative !important;
+  isolation: isolate !important;
+  background: transparent !important;
+}
+
+.dash-v2::before {
+  content: "" !important;
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: -1 !important;
+  pointer-events: none !important;
+
+  background-image:
+    linear-gradient(
+      90deg,
+      rgba(8, 7, 5, 0.94) 0%,
+      rgba(12, 9, 7, 0.86) 45%,
+      rgba(13, 10, 8, 0.72) 100%
+    ),
+    url("/salora-dashboard-bg.jpg") !important;
+
+  background-position: center !important;
+  background-size: cover !important;
+  background-repeat: no-repeat !important;
+}
+
+html,
+body {
+  background: #0e0c0a !important;
+}
