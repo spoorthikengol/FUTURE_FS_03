@@ -2544,3 +2544,157 @@
   }
 }
 
+
+/* =========================================================
+   Phase G — Floor & Capacity Intelligence
+   Real per-stylist floor state (current/next appointment,
+   available window, skills, walk-in readiness).
+   ========================================================= */
+
+.floorGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.floorRow {
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  background: rgba(255, 255, 255, 0.018);
+  padding: 13px;
+  margin-top: 10px;
+  transition:
+    transform 0.25s ease,
+    border-color 0.25s ease,
+    background 0.25s ease;
+}
+
+.floorRow:hover {
+  transform: translateY(-2px);
+  border-color: rgba(212, 175, 55, 0.2);
+  background: rgba(212, 175, 55, 0.025);
+}
+
+.floorRowTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.floorIdentity {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.floorName {
+  color: #f5e6c8;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.floorStateBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(245, 230, 200, 0.55);
+  white-space: nowrap;
+}
+
+.floorStateDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(245, 230, 200, 0.4);
+  flex-shrink: 0;
+}
+
+.floorStateWithCustomer .floorStateDot {
+  background: #e0a63a;
+  box-shadow: 0 0 8px rgba(224, 166, 58, 0.6);
+}
+
+.floorStateWithCustomer {
+  color: #e0a63a;
+  border-color: rgba(224, 166, 58, 0.25);
+}
+
+.floorStateAvailable .floorStateDot {
+  background: #6bbf8a;
+  box-shadow: 0 0 8px rgba(107, 191, 138, 0.55);
+}
+
+.floorStateAvailable {
+  color: #6bbf8a;
+  border-color: rgba(107, 191, 138, 0.22);
+}
+
+.floorMeta {
+  margin-top: 10px;
+  display: grid;
+  gap: 4px;
+  font-size: 10px;
+  color: rgba(245, 230, 200, 0.55);
+}
+
+.floorMeta strong {
+  color: #f5e6c8;
+  font-weight: 500;
+}
+
+.floorSkills {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.floorSkillTag {
+  padding: 2px 8px;
+  border: 1px solid rgba(212, 175, 55, 0.18);
+  color: rgba(245, 230, 200, 0.55);
+  font-size: 8px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.floorNoSkills {
+  margin-top: 10px;
+  font-size: 9px;
+  color: rgba(245, 230, 200, 0.32);
+}
+
+.floorReadyBadge {
+  margin-top: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: 1px solid rgba(212, 175, 55, 0.3);
+  background: rgba(212, 175, 55, 0.07);
+  color: #d4af37;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .floorRow {
+    transition: none;
+  }
+
+  .floorRow:hover {
+    transform: none;
+  }
+}

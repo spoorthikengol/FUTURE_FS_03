@@ -81,6 +81,28 @@ type Appointment = {
   status?: string;
 };
 
+// Mirrors apps/api/src/floor-state.ts FloorRow as serialized over the
+// wire by GET /api/dashboard (Date fields become ISO strings via JSON).
+type FloorAppointmentSummary = {
+  id: string;
+  customerName: string | null;
+  serviceName: string | null;
+  start: string;
+  end: string;
+};
+
+type FloorRow = {
+  stylistId: string;
+  name: string;
+  state: "WITH_CUSTOMER" | "AVAILABLE" | "OFF_FLOOR";
+  currentAppointment: FloorAppointmentSummary | null;
+  nextAppointment: FloorAppointmentSummary | null;
+  minutesUntilNext: number | null;
+  availableForMinutes: number | null;
+  skills: string[];
+  walkInReady: boolean;
+};
+
 type Customer = {
   id: string;
   name: string;
@@ -103,6 +125,8 @@ type DashboardData = {
   services?: Service[];
 
   stylists?: Stylist[];
+
+  floor?: FloorRow[];
 
   appointments?: Appointment[];
   today_appointments?: Appointment[];
@@ -765,6 +789,8 @@ export default function DashboardPage() {
     [];
 
   const stylists = dashboard?.stylists || [];
+
+  const floor = dashboard?.floor || [];
 
   const salonName = dashboard?.salon?.name || "SALORA";
 
@@ -2874,15 +2900,111 @@ setSelectedOptionId("");
             <section className="salora-capacity-section">
               <PanelHeader
                 eyebrow="FLOOR INTELLIGENCE"
-                title="Live stylist load"
+                title="Live stylist floor"
                 action={
                   <span className="salora-panel-note">
-                    Based on today&apos;s loaded appointments
+                    Real-time state from today&apos;s schedule
                   </span>
                 }
               />
 
-              {stylistLoad.length === 0 ? (
+              {floor.length > 0 ? (
+                <div className={styles.floorGrid}>
+                  {floor.map((row) => (
+                    <div
+                      className={styles.floorRow}
+                      key={row.stylistId}
+                    >
+                      <div className={styles.floorRowTop}>
+                        <div className={styles.floorIdentity}>
+                          <span className={styles.floorName}>
+                            {row.name}
+                          </span>
+                        </div>
+
+                        <span
+                          className={`${styles.floorStateBadge} ${
+                            row.state === "WITH_CUSTOMER"
+                              ? styles.floorStateWithCustomer
+                              : styles.floorStateAvailable
+                          }`}
+                        >
+                          <span className={styles.floorStateDot} />
+                          {row.state === "WITH_CUSTOMER"
+                            ? "With customer"
+                            : "Available"}
+                        </span>
+                      </div>
+
+                      <div className={styles.floorMeta}>
+                        {row.currentAppointment ? (
+                          <span>
+                            <strong>
+                              {row.currentAppointment.serviceName ||
+                                "In service"}
+                            </strong>
+                            {row.currentAppointment.customerName
+                              ? ` with ${row.currentAppointment.customerName}`
+                              : ""}{" "}
+                            until{" "}
+                            {time(row.currentAppointment.end)}
+                          </span>
+                        ) : (
+                          <span>Free right now</span>
+                        )}
+
+                        {row.nextAppointment ? (
+                          <span>
+                            Next:{" "}
+                            <strong>
+                              {row.nextAppointment.serviceName ||
+                                "Appointment"}
+                            </strong>{" "}
+                            at {time(row.nextAppointment.start)}
+                            {row.minutesUntilNext !== null
+                              ? ` (in ${row.minutesUntilNext}m)`
+                              : ""}
+                          </span>
+                        ) : (
+                          <span>No further bookings today</span>
+                        )}
+
+                        {row.availableForMinutes !== null && (
+                          <span>
+                            {row.state === "AVAILABLE"
+                              ? `Open window: ${row.availableForMinutes}m`
+                              : `Free for ${row.availableForMinutes}m once this service ends`}
+                          </span>
+                        )}
+                      </div>
+
+                      {row.skills.length > 0 ? (
+                        <div className={styles.floorSkills}>
+                          {row.skills.map((skill) => (
+                            <span
+                              className={styles.floorSkillTag}
+                              key={skill}
+                            >
+                              {skill}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className={styles.floorNoSkills}>
+                          No skills on file
+                        </div>
+                      )}
+
+                      {row.walkInReady && (
+                        <span className={styles.floorReadyBadge}>
+                          <Zap size={11} />
+                          Walk-in ready
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : stylistLoad.length === 0 ? (
                 <EmptyState
                   icon={<Users size={20} />}
                   title="No stylists loaded"

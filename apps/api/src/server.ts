@@ -29,6 +29,12 @@ import {
   type Result as EngineResult,
 } from './engine.js';
 
+import {
+  buildFloorState,
+  type FloorAppointment,
+  type FloorStylist,
+} from './floor-state.js';
+
 /* -------------------------------------------------------------------------- */
 /* Application                                                                */
 /* -------------------------------------------------------------------------- */
@@ -1054,6 +1060,7 @@ app.get(
       cancelledResult,
       todayRevenueResult,
       walkInResult,
+      stylistSkillsResult,
     ] = await Promise.all([
       pool.query(
         `
@@ -1207,6 +1214,30 @@ app.get(
         `,
         [salonId],
       ),
+
+      /*
+       * Real skill data for the floor panel (Phase G): which
+       * services each stylist is actually qualified for, per the
+       * stylist_skills table. Never inferred or guessed.
+       */
+      pool.query(
+        `
+          SELECT
+            ss.stylist_id,
+            s.name AS service_name
+          FROM stylist_skills ss
+          INNER JOIN services s
+            ON s.id = ss.service_id
+          INNER JOIN stylists st
+            ON st.id = ss.stylist_id
+          WHERE
+            st.salon_id = $1
+          ORDER BY
+            st.id,
+            s.name
+        `,
+        [salonId],
+      ),
     ]);
 
     const stylists =
@@ -1225,6 +1256,71 @@ app.get(
         }) =>
           stylist.active,
       ).length;
+
+    /*
+     * Phase G — Floor & Capacity Intelligence.
+     *
+     * Built entirely from the real rows already queried above:
+     * real stylists, real appointments, real stylist_skills. No
+     * fabricated stylists, appointments, or capacity numbers.
+     */
+    const skillsByStylist: Record<string, string[]> = {};
+
+    for (const row of stylistSkillsResult.rows as {
+      stylist_id: string;
+      service_name: string;
+    }[]) {
+      const existing =
+        skillsByStylist[row.stylist_id] ?? [];
+
+      existing.push(row.service_name);
+
+      skillsByStylist[row.stylist_id] = existing;
+    }
+
+    const floorStylists: FloorStylist[] =
+      stylists.map(
+        (stylist: {
+          id: string;
+          name: string;
+          active: boolean;
+        }) => ({
+          id: stylist.id,
+          name: stylist.name,
+          active: stylist.active,
+        }),
+      );
+
+    const floorAppointments: FloorAppointment[] =
+      appointments.map(
+        (appointment: {
+          id: string;
+          stylist_id: string;
+          scheduled_start: string | Date;
+          scheduled_end: string | Date;
+          status: string;
+          customer: string | null;
+          service: string | null;
+        }) => ({
+          id: appointment.id,
+          stylistId: appointment.stylist_id,
+          start: new Date(appointment.scheduled_start),
+          end: new Date(appointment.scheduled_end),
+          status: appointment.status,
+          customerName: appointment.customer,
+          serviceName: appointment.service,
+        }),
+      );
+
+    const floor = buildFloorState({
+      now: new Date(),
+      timezone: salon.timezone,
+      openTime: salon.open_time,
+      closeTime: salon.close_time,
+      stylists: floorStylists,
+      appointments: floorAppointments,
+      skillsByStylist,
+    });
 
     const upcomingAppointments =
       appointments.filter(
@@ -1280,6 +1376,8 @@ app.get(
       services,
 
       appointments,
+
+      floor,
 
       customerCount:
         Number(
