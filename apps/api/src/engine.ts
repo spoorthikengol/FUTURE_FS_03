@@ -23,6 +23,17 @@ export type Input = {
   appointments: A[];
 };
 
+export type RippleImpact = {
+  appointmentId: string;
+  stylistId: string;
+  originalStart: Date;
+  originalEnd: Date;
+  newStart: Date;
+  newEnd: Date;
+  delay: number;
+  hardConstraintsSatisfied: boolean;
+};
+
 export type Result = {
   state: State;
   stylistId: string;
@@ -33,6 +44,7 @@ export type Result = {
   maxDelay: number;
   wait: number;
   affected: number;
+  ripple: RippleImpact[];
   reason: string;
 };
 
@@ -262,17 +274,20 @@ function isDirectlyFeasible(
 function calculateCascade(
   start: Date,
   end: Date,
+  buffer: number,
   appointments: A[],
 ): {
   totalDelay: number;
   maxDelay: number;
   affected: number;
+  ripple: RippleImpact[];
 } {
   let cursor = new Date(end);
 
   let totalDelay = 0;
   let maxDelay = 0;
   let affected = 0;
+  const ripple: RippleImpact[] = [];
 
   const downstream = appointments
     .filter(
@@ -292,19 +307,31 @@ function calculateCascade(
     const originalEnd = appointment.end;
 
     /*
-     * No conflict with the current cursor.
+     * The downstream appointment can only start once the
+     * required buffer after the current cursor has elapsed.
+     * This mirrors the same buffer rule isDirectlyFeasible
+     * applies when placing the candidate itself against a
+     * prior appointment — the buffer policy is enforced
+     * consistently in both directions.
      */
-    if (cursor.getTime() <= originalStart.getTime()) {
+    const requiredStart = addMinutes(cursor, buffer);
+
+    /*
+     * No conflict: the appointment already starts at or after
+     * the required buffer window.
+     */
+    if (requiredStart.getTime() <= originalStart.getTime()) {
       cursor = new Date(originalEnd);
       continue;
     }
 
     /*
-     * This appointment is pushed forward.
+     * This appointment is pushed forward to the earliest
+     * buffer-safe start.
      */
     const delay = minutesBetween(
       originalStart,
-      cursor,
+      requiredStart,
     );
 
     totalDelay += delay;
@@ -315,16 +342,33 @@ function calculateCascade(
      * Preserve the original appointment duration while
      * moving its end forward by the same delay.
      */
-    cursor = addMinutes(
+    const newStart = new Date(requiredStart);
+    const newEnd = addMinutes(
       originalEnd,
       delay,
     );
+
+    ripple.push({
+      appointmentId: appointment.id,
+      stylistId: appointment.stylistId,
+      originalStart: new Date(originalStart),
+      originalEnd: new Date(originalEnd),
+      newStart,
+      newEnd,
+      delay,
+      hardConstraintsSatisfied:
+        newStart.getTime() >= requiredStart.getTime() &&
+        newEnd.getTime() > newStart.getTime(),
+    });
+
+    cursor = newEnd;
   }
 
   return {
     totalDelay,
     maxDelay,
     affected,
+    ripple,
   };
 }
 
@@ -503,6 +547,7 @@ export function simulate(input: Input): Result[] {
       const cascade = calculateCascade(
         start,
         end,
+        input.buffer,
         stylistAppointments,
       );
 
@@ -549,6 +594,8 @@ export function simulate(input: Input): Result[] {
         wait,
 
         affected: cascade.affected,
+
+        ripple: cascade.ripple,
 
         reason: buildReason(
           state,

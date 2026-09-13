@@ -34,6 +34,11 @@ import {
   type ReactNode,
 } from "react";
 import styles from "./page.module.css";
+import {
+  candidateKey,
+  findRecommendedCandidate,
+  isSameCandidate,
+} from "./scenario-matching";
 
 type View = "overview" | "schedule" | "customers";
 
@@ -134,82 +139,83 @@ type DashboardData = {
   scheduleVersion?: number;
 };
 
-type SimulationOption = {
-  id?: string;
-
-  stylist_id?: string;
-  stylistId?: string;
-
-  start_time?: string;
-  startTime?: string;
-
-  end_time?: string;
-  endTime?: string;
-
-  total_delay_minutes?: number;
-  totalDelayMinutes?: number;
-
-  maximum_delay_minutes?: number;
-  maximumDelayMinutes?: number;
-
-  customer_wait_minutes?: number;
-  customerWaitMinutes?: number;
-
-  affected_appointments?: number;
-  affectedAppointments?: number;
-
-  revenue?: number;
-
-  valid?: boolean;
+// These mirror the Decision Engine's actual Result/RippleImpact shapes
+// (apps/api/src/engine.ts) as returned over the wire by
+// POST /api/walk-ins/simulate, where Date fields are serialized to
+// ISO strings by JSON. This is the authoritative contract — the
+// engine remains the sole source of the recommendation and every
+// candidate's metrics; nothing here is computed on the client.
+type RippleImpact = {
+  appointmentId: string;
+  stylistId: string;
+  originalStart: string;
+  originalEnd: string;
+  newStart: string;
+  newEnd: string;
+  delay: number;
+  hardConstraintsSatisfied: boolean;
 };
 
-type Decision = {
-  state?: DecisionState;
-  recommendation?: DecisionState;
-  decision?: DecisionState;
+type SimulationCandidate = {
+  state: DecisionState;
+  stylistId: string;
+  start: string;
+  end: string;
+  revenue: number;
+  totalDelay: number;
+  maxDelay: number;
+  wait: number;
+  affected: number;
+  ripple: RippleImpact[];
+  reason: string;
+};
 
-  reason?: string;
-  explanation?: string;
-
-  revenue?: number;
-
-  total_delay_minutes?: number;
-  totalDelayMinutes?: number;
-
-  maximum_delay_minutes?: number;
-  maximumDelayMinutes?: number;
-
-  customer_wait_minutes?: number;
-  customerWaitMinutes?: number;
-
-  affected_appointments?: number;
-  affectedAppointments?: number;
-
-  recommended_stylist_id?: string;
-  recommendedStylistId?: string;
-
-  schedule_version?: number;
-  scheduleVersion?: number;
-
-  options?: SimulationOption[];
+type DecisionMessage = {
+  title?: string;
+  message?: string;
 };
 
 type SimulationResponse = {
-  simulation_id?: string;
   simulationId?: string;
 
-  decision?: Decision;
-  recommendation?: Decision;
+  // The engine's authoritative recommendation. null means no
+  // feasible placement was found — never assume otherwise.
+  recommendation: SimulationCandidate | null;
 
-  options?: SimulationOption[];
+  // Every candidate the engine evaluated (server currently caps
+  // this at 8). The recommendation is one of these, identified by
+  // matching stylistId/start/end — never by array position.
+  candidates?: SimulationCandidate[];
+
+  decision?: DecisionMessage;
+
+  meta?: {
+    service?: string;
+    duration?: number;
+    price?: number;
+    buffer?: number;
+    timezone?: string;
+  };
 };
 
 type HistoryItem = {
   id: string;
+  ledgerId?: string;
+  simulationId?: string;
   customer: string;
   service: string;
   state: DecisionState;
   revenue: number;
+  actualRevenue?: number | null;
+  staffAction?: string | null;
+  outcome?: string | null;
+  stylist?: string | null;
+  recommendedStart?: string | null;
+  recommendedEnd?: string | null;
+  actedAt?: string | null;
+  outcomeAt?: string | null;
+  scheduleChanged?: boolean;
+  recommendationFollowed?: boolean | null;
   createdAt: string;
 };
 
@@ -217,6 +223,7 @@ type HistoryItem = {
 // simulation/decision data at the moment of acceptance — every field
 // here traces back to a real API response, never invented at render time.
 type AcceptedResult = {
+  ledgerId?: string;
   customer: string;
   service: string;
   stylist: string;
@@ -327,16 +334,17 @@ function dateTime(value?: string) {
   });
 }
 
-function decisionState(decision?: Decision | null): DecisionState {
-  return (
-    decision?.state ||
-    decision?.recommendation ||
-    decision?.decision ||
-    "WAIT"
-  );
+// Returns null when there is no engine result to read a state from —
+// callers must render a safe "no recommendation" state rather than
+// falling back to a guessed decision state.
+function decisionState(
+  candidate?: SimulationCandidate | null,
+): DecisionState | null {
+  return candidate?.state ?? null;
 }
 
-function stateLabel(state: DecisionState) {
+function stateLabel(state: DecisionState | null) {
+  if (!state) return "UNAVAILABLE";
   if (state === "ACCEPT_WITH_WARNING") {
     return "ACCEPT WITH WARNING";
   }
@@ -344,20 +352,12 @@ function stateLabel(state: DecisionState) {
   return state;
 }
 
-function stateClass(state: DecisionState) {
+function stateClass(state: DecisionState | null) {
   if (state === "ACCEPT") return styles.accept;
   if (state === "ACCEPT_WITH_WARNING") return styles.warning;
   if (state === "WAIT") return styles.wait;
 
   return styles.reschedule;
-}
-
-function normalizeNumber(
-  object: Record<string, unknown> | undefined,
-  snake: string,
-  camel: string,
-) {
-  return Number(object?.[snake] ?? object?.[camel] ?? 0);
 }
 
 function getAppointmentStart(appointment: Appointment) {
@@ -392,44 +392,31 @@ function getAppointmentStylist(appointment: Appointment) {
   );
 }
 
-function optionDelay(option: SimulationOption) {
-  return normalizeNumber(
-    option as unknown as Record<string, unknown>,
-    "total_delay_minutes",
-    "totalDelayMinutes",
-  );
+// Real field readers against the engine's actual Result shape.
+// (The old snake_case/"minutes"-suffixed field names never existed
+// on the real API response, so these are the corrected equivalents.)
+function optionDelay(option: SimulationCandidate) {
+  return Number(option.totalDelay ?? 0);
 }
 
-function optionMaxDelay(option: SimulationOption) {
-  return normalizeNumber(
-    option as unknown as Record<string, unknown>,
-    "maximum_delay_minutes",
-    "maximumDelayMinutes",
-  );
+function optionMaxDelay(option: SimulationCandidate) {
+  return Number(option.maxDelay ?? 0);
 }
 
-function optionWait(option: SimulationOption) {
-  return normalizeNumber(
-    option as unknown as Record<string, unknown>,
-    "customer_wait_minutes",
-    "customerWaitMinutes",
-  );
+function optionWait(option: SimulationCandidate) {
+  return Number(option.wait ?? 0);
 }
 
-function optionAffected(option: SimulationOption) {
-  return normalizeNumber(
-    option as unknown as Record<string, unknown>,
-    "affected_appointments",
-    "affectedAppointments",
-  );
+function optionAffected(option: SimulationCandidate) {
+  return Number(option.affected ?? 0);
 }
 
-function optionStylistId(option: SimulationOption) {
-  return option.stylistId || option.stylist_id;
+function optionStylistId(option: SimulationCandidate) {
+  return option.stylistId;
 }
 
 function getOptionStylistName(
-  option: SimulationOption,
+  option: SimulationCandidate,
   stylists: Stylist[],
 ) {
   const stylist = stylists.find(
@@ -479,6 +466,8 @@ export default function DashboardPage() {
   const [online, setOnline] = useState(true);
 
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
 
   const [now, setNow] = useState(new Date());
 
@@ -501,6 +490,108 @@ export default function DashboardPage() {
     useState(0);
 
   const [customerQuery, setCustomerQuery] = useState("");
+
+  const loadDecisionHistory = useCallback(async () => {
+    try {
+      setHistoryLoading(true);
+      setHistoryError("");
+
+      const response = await fetch("/api/decision-outcomes", {
+        credentials: "include",
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        throw new Error("Unable to load decision history.");
+      }
+
+      const data = await response.json();
+      const rows = Array.isArray(data) ? data : [];
+
+      const nextHistory: HistoryItem[] = rows.map(
+        (row: Record<string, unknown>) => ({
+          id: String(row.id),
+          ledgerId: String(row.id),
+          simulationId:
+            row.simulationId == null
+              ? undefined
+              : String(row.simulationId),
+          customer:
+            String(
+              row.customerName ??
+                row.customer_name ??
+                "Walk-in customer",
+            ),
+          service: String(row.service ?? "Service"),
+          state: (
+            row.recommendationState ??
+            row.recommendation_state ??
+            "WAIT"
+          ) as DecisionState,
+          revenue: Number(
+            row.expectedRevenueInr ??
+              row.expected_revenue_inr ??
+              0,
+          ),
+          actualRevenue:
+            row.actualRevenueInr == null
+              ? null
+              : Number(row.actualRevenueInr),
+          staffAction:
+            row.staffAction == null
+              ? null
+              : String(row.staffAction),
+          outcome:
+            row.outcome == null
+              ? null
+              : String(row.outcome),
+          stylist:
+            row.stylist == null
+              ? null
+              : String(row.stylist),
+          recommendedStart:
+            row.recommendedStart == null
+              ? null
+              : String(row.recommendedStart),
+          recommendedEnd:
+            row.recommendedEnd == null
+              ? null
+              : String(row.recommendedEnd),
+          actedAt:
+            row.actedAt == null
+              ? null
+              : String(row.actedAt),
+          outcomeAt:
+            row.outcomeAt == null
+              ? null
+              : String(row.outcomeAt),
+          scheduleChanged:
+            row.scheduleChanged == null
+              ? undefined
+              : Boolean(row.scheduleChanged),
+          recommendationFollowed:
+            row.recommendationFollowed == null
+              ? null
+              : Boolean(row.recommendationFollowed),
+          createdAt: String(
+            row.createdAt ??
+              row.created_at ??
+              new Date().toISOString(),
+          ),
+        }),
+      );
+
+      setHistory(nextHistory);
+    } catch (err) {
+      setHistoryError(
+        err instanceof Error
+          ? err.message
+          : "Unable to load decision history.",
+      );
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
 
   const loadDashboard = useCallback(async () => {
     try {
@@ -581,18 +672,7 @@ export default function DashboardPage() {
   useEffect(() => {
     loadDashboard();
     loadCustomers();
-
-    const saved = window.localStorage.getItem(
-      "salora_decision_history",
-    );
-
-    if (saved) {
-      try {
-        setHistory(JSON.parse(saved));
-      } catch {
-        setHistory([]);
-      }
-    }
+    loadDecisionHistory();
 
     const onlineHandler = () => setOnline(true);
     const offlineHandler = () => setOnline(false);
@@ -611,7 +691,7 @@ export default function DashboardPage() {
 
       window.clearInterval(interval);
     };
-  }, [loadDashboard, loadCustomers]);
+  }, [loadDashboard, loadCustomers, loadDecisionHistory]);
 
   useEffect(() => {
     if (!serviceMenuOpen) return;
@@ -763,86 +843,83 @@ export default function DashboardPage() {
     [services, selectedService],
   );
 
-  const activeDecision =
-  simulation?.recommendation ||
-  simulation?.decision ||
-  null;
+  // The engine's authoritative recommendation for this simulation.
+  // null is a real, valid state (no feasible placement) — it must
+  // never be papered over with a guess.
+  const recommendation = simulation?.recommendation ?? null;
+
+  // Every candidate the engine evaluated. This IS the Scenario
+  // Comparison data set — never re-derived or re-ranked on the
+  // client.
+  const simulationCandidates: SimulationCandidate[] =
+    simulation?.candidates || [];
+
+  // The candidate that IS the recommendation, found by matching
+  // stylistId/start/end — never by assuming array position. null
+  // means the recommendation couldn't be matched to any evaluated
+  // candidate (a "recommendation unavailable" state), which is
+  // reported honestly rather than silently defaulting to the first
+  // option.
+  const recommendedCandidate = useMemo(
+    () =>
+      findRecommendedCandidate(simulationCandidates, recommendation),
+    [simulationCandidates, recommendation],
+  );
+
+  // "activeDecision" is what the top decision panel renders. It is
+  // the matched recommended candidate when one exists; if the
+  // engine returned a recommendation but it couldn't be matched
+  // into the candidate list, fall back to the recommendation object
+  // itself (still real engine data, just not cross-checked against
+  // `candidates`) rather than showing nothing.
+  const activeDecision = recommendedCandidate ?? recommendation;
 
   const state = decisionState(activeDecision);
 
-  const simulationOptions =
-    simulation?.options ||
-    activeDecision?.options ||
-    [];
+  // True only when the engine returned a recommendation that this
+  // client could not locate in its own candidate list. Surfaced as
+  // an explicit, honest warning instead of a silent fallback.
+  const recommendationUnmatched = Boolean(
+    recommendation && !recommendedCandidate && simulationCandidates.length > 0,
+  );
 
-  const selectedOption = useMemo(() => {
-    if (!simulationOptions.length) return null;
+  const selectedCandidate = useMemo(() => {
+    if (!simulationCandidates.length) return null;
 
     return (
-      simulationOptions.find(
-        (option) => option.id === selectedOptionId,
+      simulationCandidates.find(
+        (candidate) => candidateKey(candidate) === selectedOptionId,
       ) ||
-      simulationOptions[0]
+      recommendedCandidate ||
+      simulationCandidates[0]
     );
-  }, [simulationOptions, selectedOptionId]);
+  }, [simulationCandidates, selectedOptionId, recommendedCandidate]);
 
-  const recommendedStylistId =
-    activeDecision?.recommendedStylistId ||
-    activeDecision?.recommended_stylist_id;
+  // Kept as the prior variable name so the rest of the render tree
+  // (ripple panel, accept flow) needs minimal changes.
+  const selectedOption = selectedCandidate;
+
+  const isSelectedTheRecommendation =
+    Boolean(selectedCandidate) &&
+    isSameCandidate(selectedCandidate, recommendedCandidate);
+
+  const recommendedStylistId = recommendedCandidate?.stylistId;
 
   const recommendedStylist = stylists.find(
     (stylist) => stylist.id === recommendedStylistId,
   );
 
-  const totalDelay = normalizeNumber(
-    activeDecision as unknown as Record<string, unknown>,
-    "total_delay_minutes",
-    "totalDelayMinutes",
-  );
+  const totalDelay = Number(activeDecision?.totalDelay ?? 0);
 
-  const maximumDelay = normalizeNumber(
-    activeDecision as unknown as Record<string, unknown>,
-    "maximum_delay_minutes",
-    "maximumDelayMinutes",
-  );
+  const maximumDelay = Number(activeDecision?.maxDelay ?? 0);
 
-  const customerWait = normalizeNumber(
-    activeDecision as unknown as Record<string, unknown>,
-    "customer_wait_minutes",
-    "customerWaitMinutes",
-  );
+  const customerWait = Number(activeDecision?.wait ?? 0);
 
-  const affectedAppointments = normalizeNumber(
-    activeDecision as unknown as Record<string, unknown>,
-    "affected_appointments",
-    "affectedAppointments",
-  );
+  const affectedAppointments = Number(activeDecision?.affected ?? 0);
 
   const simulationRevenue = Number(
     activeDecision?.revenue || 0,
   );
-
-  const feasibleOptions = simulationOptions.filter(
-    (option) => option.valid !== false,
-  );
-
-  const bestOption = useMemo(() => {
-    if (!simulationOptions.length) return null;
-
-    return [...simulationOptions].sort((a, b) => {
-      if (a.valid === false && b.valid !== false) return 1;
-      if (a.valid !== false && b.valid === false) return -1;
-
-      const delayDifference =
-        optionDelay(a) - optionDelay(b);
-
-      if (delayDifference !== 0) {
-        return delayDifference;
-      }
-
-      return optionWait(a) - optionWait(b);
-    })[0];
-  }, [simulationOptions]);
 
   const scheduleAppointments = useMemo(() => {
     return [...appointments].sort((a, b) => {
@@ -994,53 +1071,21 @@ export default function DashboardPage() {
 
       setSimulation(data);
 
-      const options =
-        data?.options ||
-        data?.decision?.options ||
-        data?.recommendation?.options ||
-        [];
-
-      if (options.length > 0) {
-        setSelectedOptionId(options[0].id || "");
-      }
-
-      const nextState = decisionState(
-        data?.decision || data?.recommendation,
+      // Default the selection to the engine's recommendation, found
+      // by identity match against the real candidate list — never
+      // by array position. If it can't be matched, leave the
+      // selection empty; selectedCandidate's own fallback (first
+      // candidate) takes over, and the mismatch is surfaced in the
+      // UI via recommendationUnmatched.
+      const candidates: SimulationCandidate[] = data?.candidates || [];
+      const recommended = findRecommendedCandidate(
+        candidates,
+        data?.recommendation ?? null,
       );
 
-      const item: HistoryItem = {
-        id:
-          data?.simulation_id ||
-          data?.simulationId ||
-          crypto.randomUUID(),
+      setSelectedOptionId(recommended ? candidateKey(recommended) : "");
 
-        customer:
-          customerName.trim() || "Walk-in customer",
-
-        service: selectedServiceObject.name,
-
-        state: nextState,
-
-        revenue: Number(
-          data?.decision?.revenue ||
-            data?.recommendation?.revenue ||
-            0,
-        ),
-
-        createdAt: new Date().toISOString(),
-      };
-
-      const nextHistory = [item, ...history].slice(
-        0,
-        12,
-      );
-
-      setHistory(nextHistory);
-
-      window.localStorage.setItem(
-        "salora_decision_history",
-        JSON.stringify(nextHistory),
-      );
+      await loadDecisionHistory();
     } catch (err) {
       setError(
         err instanceof Error
@@ -1053,7 +1098,9 @@ export default function DashboardPage() {
   };
 
   const acceptWalkIn = async () => {
-    if (!activeDecision) return;
+    if (!activeDecision || !selectedOption || !selectedServiceObject) {
+      return;
+    }
 
     setAccepting(true);
     setError("");
@@ -1062,41 +1109,25 @@ export default function DashboardPage() {
 
     // Capture the values that will back the success panel BEFORE any
     // state resets happen below. Every field here is already-known,
-    // real data from the active decision/simulation — nothing here is
-    // invented at acceptance time.
-    const optionForStylistName =
-      selectedOption ||
-      simulationOptions[0] ||
-      null;
-
-    const stylistName =
-      recommendedStylist?.name ||
-      (optionForStylistName
-        ? getOptionStylistName(
-            optionForStylistName,
-            stylists,
-          )
-        : "Unassigned");
-
-    const optionStart =
-      selectedOption?.startTime ||
-      selectedOption?.start_time;
-
-    const optionEnd =
-      selectedOption?.endTime ||
-      selectedOption?.end_time;
+    // real data from the selected candidate — nothing here is
+    // invented at acceptance time. This intentionally reflects the
+    // SELECTED candidate (what will actually be booked), not just
+    // the recommendation, since the receptionist may have chosen an
+    // alternative.
+    const stylistName = getOptionStylistName(
+      selectedOption,
+      stylists,
+    );
 
     const pendingResult: AcceptedResult = {
       customer:
         customerName.trim() || "Walk-in customer",
       service:
-        selectedServiceObject?.name || "Service",
+        selectedServiceObject.name || "Service",
       stylist: stylistName,
-      time: optionStart
-        ? `${time(optionStart)} — ${time(optionEnd)}`
-        : "Time confirmed by salon",
-      revenue: simulationRevenue,
-      delayMinutes: totalDelay,
+      time: `${time(selectedOption.start)} — ${time(selectedOption.end)}`,
+      revenue: Number(selectedOption.revenue ?? 0),
+      delayMinutes: optionDelay(selectedOption),
     };
 
     try {
@@ -1112,18 +1143,28 @@ export default function DashboardPage() {
             "Idempotency-Key": idempotencyKey,
           },
           body: JSON.stringify({
-            customer_name:
+            // Matches the server's acceptanceSchema exactly. The
+            // engine re-verifies this placement server-side against
+            // a fresh schedule snapshot before committing anything —
+            // the client never has authority over the outcome.
+            serviceId: selectedServiceObject.id,
+
+            stylistId: selectedOption.stylistId,
+
+            startAt: selectedOption.start,
+
+            customerName:
               customerName.trim() || "Walk-in customer",
 
-            service_id: selectedServiceObject?.id,
+            simulationId: simulation?.simulationId,
 
-            simulation_id:
-              simulation?.simulation_id ||
-              simulation?.simulationId,
-
-            option_id:
-              selectedOption?.id ||
-              simulationOptions[0]?.id,
+            // Lets the server reject with a clear "the decision
+            // changed, simulate again" instead of a generic
+            // conflict, if the schedule shifted between simulate
+            // and accept. Never trusted as authoritative by the
+            // server — it is only compared against a fresh
+            // recomputation.
+            decisionState: selectedOption.state,
           }),
         },
       );
@@ -1136,13 +1177,11 @@ export default function DashboardPage() {
         data = null;
       }
 
-      // The backend contract for a stale-schedule conflict is not
-      // available to inspect from this frontend-only context. HTTP 409
-      // is the standard, widely-used status for "the resource you're
-      // acting on has changed since you read it" — so it is handled
-      // explicitly here without assuming a specific response body
-      // shape beyond the optional message/error fields already used
-      // for every other error path in this file.
+      // The backend returns 409 for both a stale-schedule conflict
+      // and a stale/changed decision (see acceptanceSchema handling
+      // in apps/api/src/server.ts) — both are surfaced the same way,
+      // prompting the receptionist to simulate again rather than
+      // accepting on possibly-outdated information.
       if (response.status === 409) {
         setScheduleConflict(true);
         setScheduleConflictMessage(
@@ -1161,35 +1200,23 @@ export default function DashboardPage() {
         );
       }
 
-      await loadDashboard();
+      const acceptedLedgerId =
+        (data?.ledgerId as string | undefined) ||
+        (data?.ledger_id as string | undefined);
 
-      const acceptedCustomer =
-        customerName.trim() || "Walk-in customer";
+      await Promise.all([
+        loadDashboard(),
+        loadDecisionHistory(),
+      ]);
 
-      const acceptedService =
-        selectedServiceObject?.name;
+      setAcceptedResult({
+        ...pendingResult,
+        ledgerId: acceptedLedgerId,
+      });
 
-      const nextHistory = history.map((item) =>
-        item.customer === acceptedCustomer &&
-        item.service === acceptedService
-          ? {
-              ...item,
-              state: "ACCEPT" as DecisionState,
-            }
-          : item,
-      );
-
-      setHistory(nextHistory);
-
-      window.localStorage.setItem(
-        "salora_decision_history",
-        JSON.stringify(nextHistory),
-      );
-
-      setAcceptedResult(pendingResult);
-      setSimulation(null);
-      setCustomerName("");
-      setSelectedOptionId("");
+setSimulation(null);
+setCustomerName("");
+setSelectedOptionId("");
     } catch (err) {
       setError(
         err instanceof Error
@@ -2042,6 +2069,16 @@ export default function DashboardPage() {
                       now on the live floor.
                     </p>
 
+                    {acceptedResult.ledgerId && (
+                      <div className="salora-ledger-confirmation">
+                        <ShieldCheck size={14} />
+                        <span>
+                          Decision outcome recorded in the
+                          server ledger.
+                        </span>
+                      </div>
+                    )}
+
                     <div className="salora-success-grid">
                       <div>
                         <span>Customer</span>
@@ -2162,6 +2199,47 @@ export default function DashboardPage() {
 
                 {!acceptedResult &&
                   simulation &&
+                  !activeDecision && (
+                    <div
+                      className="salora-decision-stage"
+                      role="status"
+                      aria-live="polite"
+                    >
+                      <div className="salora-decision-top">
+                        <div>
+                          <span>DECISION</span>
+
+                          <div
+                            className={`${styles.decisionState} ${stateClass(
+                              null,
+                            )}`}
+                          >
+                            <TrendingDown size={18} />
+
+                            <strong>
+                              {stateLabel(null)}
+                            </strong>
+                          </div>
+                        </div>
+
+                        <button
+                          className={styles.closeResult}
+                          onClick={resetSimulation}
+                          aria-label="Close simulation"
+                        >
+                          <X size={15} />
+                        </button>
+                      </div>
+
+                      <p className={styles.decisionExplanation}>
+                        {simulation.decision?.message ||
+                          "SALORA could not find a safe placement within the current operating limits. Simulate again once the floor changes."}
+                      </p>
+                    </div>
+                  )}
+
+                {!acceptedResult &&
+                  simulation &&
                   activeDecision && (
                     <div
                       className="salora-decision-stage"
@@ -2252,8 +2330,7 @@ export default function DashboardPage() {
                           styles.decisionExplanation
                         }
                       >
-                        {activeDecision.explanation ||
-                          activeDecision.reason ||
+                        {activeDecision.reason ||
                           "SALORA evaluated the request against current capacity and upcoming appointments."}
                       </p>
 
@@ -2410,13 +2487,25 @@ export default function DashboardPage() {
                         />
                       </div>
 
-                      {simulationOptions.length >
-                        0 && (
+                      {recommendationUnmatched && (
+                        <div
+                          className="salora-recommendation-warning"
+                          role="alert"
+                        >
+                          <ShieldCheck size={15} />
+                          SALORA could not verify which
+                          evaluated scenario matches its
+                          recommendation. Simulate again
+                          before accepting.
+                        </div>
+                      )}
+
+                      {simulationCandidates.length > 0 && (
                         <div className="salora-options-panel">
                           <div className="salora-section-heading">
                             <div>
                               <span>
-                                WHAT-IF ANALYSIS
+                                SCENARIO COMPARISON
                               </span>
 
                               <h3>
@@ -2425,168 +2514,173 @@ export default function DashboardPage() {
                             </div>
 
                             <span>
-                              {
-                                feasibleOptions.length
-                              }{" "}
-                              of{" "}
-                              {
-                                simulationOptions.length
-                              }{" "}
-                              feasible
+                              {simulationCandidates.length}{" "}
+                              scenario
+                              {simulationCandidates.length === 1
+                                ? ""
+                                : "s"}{" "}
+                              evaluated
                             </span>
                           </div>
 
                           <div className="salora-option-grid">
-                            {simulationOptions
-                              .slice(0, 6)
-                              .map(
-                                (
-                                  option,
-                                  index,
-                                ) => {
-                                  const isSelected =
-                                    selectedOption?.id ===
-                                    option.id;
+                            {simulationCandidates.map(
+                              (candidate, index) => {
+                                const key = candidateKey(candidate);
 
-                                  const delay =
-                                    optionDelay(
-                                      option,
-                                    );
+                                const isSelected = Boolean(
+                                  selectedOption &&
+                                    isSameCandidate(
+                                      candidate,
+                                      selectedOption,
+                                    ),
+                                );
 
-                                  const maxDelay =
-                                    optionMaxDelay(
-                                      option,
-                                    );
+                                const isRecommended = Boolean(
+                                  recommendedCandidate &&
+                                    isSameCandidate(
+                                      candidate,
+                                      recommendedCandidate,
+                                    ),
+                                );
 
-                                  const wait =
-                                    optionWait(
-                                      option,
-                                    );
+                                const delay = optionDelay(candidate);
+                                const maxDelay =
+                                  optionMaxDelay(candidate);
+                                const wait = optionWait(candidate);
+                                const affected =
+                                  optionAffected(candidate);
 
-                                  const affected =
-                                    optionAffected(
-                                      option,
-                                    );
-
-                                  return (
-                                    <button
-                                      key={
-                                        option.id ||
-                                        `option-${index}`
-                                      }
-                                      type="button"
-                                      className={`salora-option-card ${
-                                        isSelected
-                                          ? "is-selected"
-                                          : ""
-                                      } ${
-                                        option.valid ===
-                                        false
-                                          ? "is-invalid"
-                                          : ""
-                                      }`}
-                                      onClick={() =>
-                                        setSelectedOptionId(
-                                          option.id ||
-                                            "",
-                                        )
-                                      }
-                                    >
-                                      <div className="salora-option-number">
-                                        0
-                                        {index +
-                                          1}
+                                return (
+                                  <button
+                                    key={key}
+                                    type="button"
+                                    className={`salora-option-card ${
+                                      isSelected ? "is-selected" : ""
+                                    } ${
+                                      isRecommended
+                                        ? "is-recommended"
+                                        : ""
+                                    }`}
+                                    aria-pressed={isSelected}
+                                    aria-current={
+                                      isRecommended
+                                        ? "true"
+                                        : undefined
+                                    }
+                                    aria-label={`${
+                                      isRecommended
+                                        ? "SALORA recommended. "
+                                        : ""
+                                    }${getOptionStylistName(
+                                      candidate,
+                                      stylists,
+                                    )}, ${time(
+                                      candidate.start,
+                                    )} to ${time(
+                                      candidate.end,
+                                    )}, ${stateLabel(
+                                      candidate.state,
+                                    )}, ${delay} minute total delay, ${affected} appointment${
+                                      affected === 1 ? "" : "s"
+                                    } affected`}
+                                    onClick={() =>
+                                      setSelectedOptionId(key)
+                                    }
+                                  >
+                                    {isRecommended && (
+                                      <div className="salora-recommended-badge">
+                                        <Sparkles size={11} />
+                                        SALORA RECOMMENDED
                                       </div>
+                                    )}
 
-                                      <div className="salora-option-main">
-                                        <strong>
-                                          {time(
-                                            option.startTime ||
-                                              option.start_time,
-                                          )}
-                                          {" — "}
-                                          {time(
-                                            option.endTime ||
-                                              option.end_time,
-                                          )}
-                                        </strong>
+                                    <div className="salora-option-number">
+                                      0{index + 1}
+                                    </div>
 
-                                        <span>
-                                          {getOptionStylistName(
-                                            option,
-                                            stylists,
-                                          )}
-                                        </span>
-                                      </div>
+                                    <div className="salora-option-main">
+                                      <strong>
+                                        {time(candidate.start)}
+                                        {" — "}
+                                        {time(candidate.end)}
+                                      </strong>
 
-                                      <div className="salora-option-metrics">
-                                        <span>
-                                          <b>
-                                            {
-                                              delay
-                                            }
-                                          </b>
-                                          m delay
-                                        </span>
-
-                                        <span>
-                                          <b>
-                                            {
-                                              maxDelay
-                                            }
-                                          </b>
-                                          m max
-                                        </span>
-
-                                        <span>
-                                          <b>
-                                            {
-                                              affected
-                                            }
-                                          </b>
-                                          affected
-                                        </span>
-                                      </div>
-
-                                      <div className="salora-option-status">
-                                        {option.valid ===
-                                        false ? (
-                                          <>
-                                            <X
-                                              size={
-                                                13
-                                              }
-                                            />
-
-                                            Unsafe
-                                          </>
-                                        ) : delay ===
-                                          0 ? (
-                                          <>
-                                            <Check
-                                              size={
-                                                13
-                                              }
-                                            />
-
-                                            Protected
-                                          </>
-                                        ) : (
-                                          <>
-                                            <Activity
-                                              size={
-                                                13
-                                              }
-                                            />
-
-                                            Impact
-                                          </>
+                                      <span>
+                                        {getOptionStylistName(
+                                          candidate,
+                                          stylists,
                                         )}
+                                      </span>
+                                    </div>
+
+                                    {isSelected && (
+                                      <div className="salora-selected-chip">
+                                        <Check size={11} />
+                                        SELECTED
                                       </div>
-                                    </button>
-                                  );
-                                },
-                              )}
+                                    )}
+
+                                    <div className="salora-option-metrics">
+                                      <span>
+                                        <b>
+                                          {money(
+                                            Number(
+                                              candidate.revenue ?? 0,
+                                            ),
+                                            salonCurrency,
+                                          )}
+                                        </b>
+                                        revenue
+                                      </span>
+
+                                      <span>
+                                        <b>{delay}</b>m delay
+                                      </span>
+
+                                      <span>
+                                        <b>{maxDelay}</b>m max
+                                      </span>
+
+                                      <span>
+                                        <b>{wait}</b>m wait
+                                      </span>
+
+                                      <span>
+                                        <b>{affected}</b>
+                                        affected
+                                      </span>
+                                    </div>
+
+                                    <div className="salora-option-status">
+                                      {delay === 0 && wait === 0 ? (
+                                        <>
+                                          <Check size={13} />
+                                          Protected
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Activity size={13} />
+                                          Impact
+                                        </>
+                                      )}
+
+                                      <span
+                                        className={`salora-option-state ${
+                                          stateClass(candidate.state)
+                                        }`}
+                                      >
+                                        {stateLabel(candidate.state)}
+                                      </span>
+                                    </div>
+
+                                    <p className="salora-option-reason">
+                                      {candidate.reason}
+                                    </p>
+                                  </button>
+                                );
+                              },
+                            )}
                           </div>
                         </div>
                       )}
@@ -2684,38 +2778,47 @@ export default function DashboardPage() {
                             styles.resultActions
                           }
                         >
-                          {(state === "ACCEPT" ||
-                            state ===
-                              "ACCEPT_WITH_WARNING") && (
-                            <button
-                              className={
-                                styles.acceptButton
-                              }
-                              onClick={
-                                acceptWalkIn
-                              }
-                              disabled={accepting}
-                            >
-                              {accepting ? (
-                                <>
-                                  <span
-                                    className={
-                                      styles.spinnerDark
-                                    }
-                                  />
+                          {selectedOption &&
+                            (selectedOption.state === "ACCEPT" ||
+                              selectedOption.state ===
+                                "ACCEPT_WITH_WARNING") && (
+                            <>
+                              <span className="salora-accept-target">
+                                {isSelectedTheRecommendation
+                                  ? "Booking the SALORA-recommended scenario"
+                                  : "Booking an alternative scenario you selected"}
+                              </span>
 
-                                  Applying...
-                                </>
-                              ) : (
-                                <>
-                                  <Check
-                                    size={16}
-                                  />
+                              <button
+                                className={
+                                  styles.acceptButton
+                                }
+                                onClick={
+                                  acceptWalkIn
+                                }
+                                disabled={accepting}
+                              >
+                                {accepting ? (
+                                  <>
+                                    <span
+                                      className={
+                                        styles.spinnerDark
+                                      }
+                                    />
 
-                                  Accept walk-in
-                                </>
-                              )}
-                            </button>
+                                    Applying...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Check
+                                      size={16}
+                                    />
+
+                                    Accept walk-in
+                                  </>
+                                )}
+                              </button>
+                            </>
                           )}
 
                           <button
@@ -2876,104 +2979,133 @@ export default function DashboardPage() {
             <section className={styles.historyPanel}>
               <PanelHeader
                 eyebrow="DECISION HISTORY"
-                title="Recent simulations"
+                title="Server-recorded decisions"
                 action={
-                  <span
-                    className={styles.panelMeta}
+                  <button
+                    type="button"
+                    className={styles.textButton}
+                    onClick={loadDecisionHistory}
+                    disabled={historyLoading}
                   >
-                    Local session history
-                  </span>
+                    <RefreshCw
+                      size={13}
+                      className={
+                        historyLoading
+                          ? styles.spin
+                          : ""
+                      }
+                    />
+                    {historyLoading
+                      ? "Refreshing"
+                      : "Refresh ledger"}
+                  </button>
                 }
               />
 
-              {history.length === 0 ? (
+              {historyError && (
                 <div
-                  className={
-                    styles.historyEmpty
-                  }
+                  className="salora-ledger-error"
+                  role="alert"
                 >
-                  <Sparkles size={18} />
+                  <span>{historyError}</span>
+                  <button
+                    type="button"
+                    onClick={loadDecisionHistory}
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
 
+              {historyLoading && history.length === 0 ? (
+                <div className="salora-ledger-loading">
+                  <RefreshCw size={16} className={styles.spin} />
+                  <span>Reading decision ledger…</span>
+                </div>
+              ) : history.length === 0 ? (
+                <div className={styles.historyEmpty}>
+                  <Sparkles size={18} />
                   <span>
-                    Your simulated walk-ins will
-                    appear here.
+                    No decision outcomes have been recorded yet.
                   </span>
                 </div>
               ) : (
-                <div
-                  className={
-                    styles.historyList
-                  }
-                >
-                  {history
-                    .slice(0, 6)
-                    .map((item) => (
+                <div className={styles.historyList}>
+                  {history.slice(0, 6).map((item) => {
+                    const recordedAction =
+                      item.staffAction &&
+                      item.staffAction !== "NONE"
+                        ? item.staffAction
+                        : "NOT ACTED";
+
+                    const recordedOutcome =
+                      item.outcome || "PENDING";
+
+                    const displayState =
+                      item.outcome === "ACCEPTED"
+                        ? "ACCEPT"
+                        : item.state;
+
+                    return (
                       <div
-                        className={
-                          styles.historyRow
-                        }
+                        className={styles.historyRow}
                         key={item.id}
                       >
-                        <div
-                          className={
-                            styles.historyIcon
-                          }
-                        >
-                          {item.state ===
-                          "ACCEPT" ? (
+                        <div className={styles.historyIcon}>
+                          {item.outcome === "ACCEPTED" ? (
                             <Check size={15} />
                           ) : (
-                            <Target
-                              size={15}
-                            />
+                            <Target size={15} />
                           )}
                         </div>
 
-                        <div
-                          className={
-                            styles.historyMain
-                          }
-                        >
-                          <strong>
-                            {item.customer}
-                          </strong>
+                        <div className={styles.historyMain}>
+                          <strong>{item.customer}</strong>
 
                           <span>
                             {item.service} ·{" "}
-                            {dateTime(
-                              item.createdAt,
-                            )}
+                            {item.stylist || "Stylist pending"} ·{" "}
+                            {dateTime(item.createdAt)}
                           </span>
+
+                          <small className="salora-history-meta">
+                            Recommendation: {stateLabel(item.state)}
+                            {" · "}
+                            Action: {recordedAction}
+                            {" · "}
+                            Outcome: {recordedOutcome}
+                          </small>
                         </div>
 
                         <span
                           className={`${styles.historyState} ${stateClass(
-                            item.state,
+                            displayState,
                           )}`}
                         >
-                          {stateLabel(
-                            item.state,
-                          )}
+                          {stateLabel(displayState)}
                         </span>
 
-                        <strong
-                          className={
-                            styles.historyRevenue
-                          }
-                        >
+                        <strong className={styles.historyRevenue}>
                           {money(
-                            item.revenue,
+                            item.actualRevenue ?? item.revenue,
                             salonCurrency,
                           )}
                         </strong>
 
-                        <ChevronRight
-                          size={15}
-                        />
+                        <ChevronRight size={15} />
                       </div>
-                    ))}
+                    );
+                  })}
                 </div>
               )}
+
+              <div className="salora-ledger-source">
+                <ShieldCheck size={12} />
+                <span>
+                  Server authoritative · tenant scoped ·
+                  recommendation and staff outcome remain separate.
+                </span>
+              </div>
             </section>
           </>
         )}
@@ -3654,58 +3786,65 @@ function RippleVisualization({
   service,
 }: {
   appointments: Appointment[];
-  selectedOption: SimulationOption | null;
+  selectedOption: SimulationCandidate | null;
   customerName: string;
   service?: Service;
 }) {
-  const visibleAppointments =
-    appointments.slice(0, 5);
+  // Real, per-appointment ripple data from the Decision Engine
+  // (Phase D) — never inferred from the aggregate delay, and never
+  // fabricated when it's missing.
+  const rippleByAppointmentId = useMemo(() => {
+    const map = new Map<string, RippleImpact>();
 
-  const delay = selectedOption
-    ? optionDelay(selectedOption)
-    : 0;
+    for (const impact of selectedOption?.ripple || []) {
+      map.set(impact.appointmentId, impact);
+    }
 
-  const start =
-    selectedOption?.startTime ||
-    selectedOption?.start_time;
+    return map;
+  }, [selectedOption]);
 
-  const end =
-    selectedOption?.endTime ||
-    selectedOption?.end_time;
+  const visibleAppointments = appointments.slice(0, 5);
+
+  const delay = selectedOption ? optionDelay(selectedOption) : 0;
+
+  const start = selectedOption?.start;
+  const end = selectedOption?.end;
+
+  const hasRippleData = Boolean(
+    selectedOption && selectedOption.ripple.length > 0,
+  );
 
   return (
     <div className="salora-ripple">
-      {delay > 0 && visibleAppointments.length > 0 && (
-        <div className="salora-ripple-disclaimer">
-          Aggregate downstream impact shown below —
-          per-appointment impact detail isn&apos;t
-          provided by the current simulation data, so no
-          individual row is marked as affected.
+      {selectedOption && !hasRippleData && (
+        <div className="salora-ripple-disclaimer is-protected">
+          No scheduled customers are affected.
         </div>
       )}
 
       <div className="salora-ripple-track">
-        {visibleAppointments.length ===
-        0 ? (
+        {visibleAppointments.length === 0 ? (
           <div className="salora-ripple-empty">
-            No scheduled appointments available
-            for the visual comparison.
+            No scheduled appointments available for the visual
+            comparison.
           </div>
         ) : (
-          visibleAppointments.map(
-            (appointment, index) => (
+          visibleAppointments.map((appointment, index) => {
+            const impact = appointment.id
+              ? rippleByAppointmentId.get(appointment.id)
+              : undefined;
+
+            const rowDelay = impact?.delay ?? 0;
+
+            return (
               <div
                 className="salora-ripple-row"
-                key={
-                  appointment.id ||
-                  `ripple-${index}`
-                }
+                key={appointment.id || `ripple-${index}`}
               >
                 <div className="salora-ripple-time">
                   {time(
-                    getAppointmentStart(
-                      appointment,
-                    ),
+                    impact?.newStart ||
+                      getAppointmentStart(appointment),
                   )}
                 </div>
 
@@ -3714,59 +3853,44 @@ function RippleVisualization({
 
                   <div
                     className={`salora-ripple-block ${
-                      delay === 0
-                        ? "is-protected"
-                        : ""
+                      impact ? "" : "is-protected"
                     }`}
                   >
                     <strong>
-                      {getAppointmentCustomer(
-                        appointment,
-                      )}
+                      {getAppointmentCustomer(appointment)}
                     </strong>
 
                     <small>
-                      {getAppointmentService(
-                        appointment,
-                      )}
+                      {getAppointmentService(appointment)}
                     </small>
                   </div>
                 </div>
 
                 <div className="salora-ripple-status">
-                  {delay === 0 ? (
+                  {impact ? (
                     <>
-                      <Check size={12} />
-
-                      Protected
+                      <Clock3 size={12} />+{Math.round(rowDelay)}m
                     </>
                   ) : (
                     <>
-                      <Clock3 size={12} />
-
-                      Scheduled
+                      <Check size={12} />
+                      Protected
                     </>
                   )}
                 </div>
               </div>
-            ),
-          )
+            );
+          })
         )}
       </div>
 
       <div className="salora-insert-card">
-        <div className="salora-insert-marker">
-          +
-        </div>
+        <div className="salora-insert-marker">+</div>
 
         <div>
-          <span>
-            PROPOSED WALK-IN
-          </span>
+          <span>PROPOSED WALK-IN</span>
 
-          <strong>
-            {customerName}
-          </strong>
+          <strong>{customerName}</strong>
 
           <small>
             {service?.name || "Requested service"}
@@ -3779,15 +3903,19 @@ function RippleVisualization({
 
         <div className="salora-insert-impact">
           <strong>
-            {delay === 0
-              ? "NO RIPPLE"
-              : `+${delay}m`}
+            {!selectedOption
+              ? "—"
+              : delay === 0
+                ? "NO RIPPLE"
+                : `+${delay}m`}
           </strong>
 
           <span>
-            {delay === 0
-              ? "Booked schedule protected"
-              : "Downstream impact detected"}
+            {!selectedOption
+              ? "Select a scenario"
+              : delay === 0
+                ? "Booked schedule protected"
+                : "Downstream impact detected"}
           </span>
         </div>
       </div>
@@ -4109,6 +4237,35 @@ const globalPremiumStyles = `
     color: rgba(245,230,200,.5);
     font-size: 10px;
     line-height: 1.6;
+  }
+
+  .salora-ripple-disclaimer.is-protected {
+    border-color: rgba(120,180,140,.28);
+    background: rgba(120,180,140,.05);
+    color: rgba(210,235,220,.62);
+  }
+
+  .salora-recommendation-warning {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 17px;
+    padding: 11px 14px;
+    border: 1px solid rgba(201,149,104,.35);
+    background: rgba(201,149,104,.06);
+    color: #f0d9c4;
+    font-size: 11px;
+    line-height: 1.5;
+  }
+
+  .salora-accept-target {
+    display: block;
+    width: 100%;
+    margin-bottom: 8px;
+    color: rgba(245,230,200,.46);
+    font-size: 9px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
   }
 
   .salora-conflict-panel {
@@ -4562,8 +4719,10 @@ const globalPremiumStyles = `
     color: inherit;
     text-align: left;
     padding: 11px;
+    min-height: 44px;
     display: grid;
     grid-template-columns: 27px minmax(0,1fr);
+    align-content: start;
     gap: 9px;
     cursor: pointer;
     position: relative;
@@ -4596,6 +4755,59 @@ const globalPremiumStyles = `
 
   .salora-option-card.is-invalid {
     opacity: .62;
+  }
+
+  .salora-option-card.is-recommended {
+    border-color: rgba(212,175,55,.55);
+    background: rgba(212,175,55,.055);
+    box-shadow:
+      inset 0 0 0 1px rgba(212,175,55,.16),
+      0 14px 40px rgba(0,0,0,.18);
+  }
+
+  .salora-option-card.is-recommended.is-selected {
+    border-color: rgba(212,175,55,.7);
+  }
+
+  .salora-recommended-badge {
+    grid-column: 1 / -1;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    width: fit-content;
+    margin-bottom: 2px;
+    padding: 4px 8px;
+    border: 1px solid rgba(212,175,55,.45);
+    background: rgba(212,175,55,.14);
+    color: #f3d98b;
+    font-size: 8px;
+    font-weight: 600;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+  }
+
+  .salora-selected-chip {
+    grid-column: 1 / -1;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    width: fit-content;
+    padding: 3px 7px;
+    border: 1px solid rgba(245,230,200,.28);
+    color: rgba(245,230,200,.75);
+    font-size: 8px;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+
+  .salora-option-reason {
+    grid-column: 1 / -1;
+    margin: 0;
+    padding-top: 6px;
+    color: rgba(245,230,200,.4);
+    font-size: 9px;
+    line-height: 1.55;
   }
 
   .salora-option-number {
@@ -4653,6 +4865,13 @@ const globalPremiumStyles = `
     font-size: 8px;
     letter-spacing: .08em;
     text-transform: uppercase;
+  }
+
+  .salora-option-state {
+    margin-left: auto;
+    padding: 2px 6px;
+    border: 1px solid currentColor;
+    font-size: 7px;
   }
 
   .salora-capacity-section {
@@ -5200,4 +5419,90 @@ const globalPremiumStyles = `
       transition: none !important;
     }
   }
+
+
+  .salora-ledger-confirmation {
+    margin-top: 13px;
+    padding: 9px 11px;
+    border: 1px solid rgba(212,175,55,.14);
+    background: rgba(212,175,55,.035);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: rgba(245,230,200,.56);
+    font-size: 9px;
+  }
+
+  .salora-ledger-confirmation svg {
+    color: #d4af37;
+    flex: 0 0 auto;
+  }
+
+  .salora-ledger-error {
+    margin: 12px 0;
+    padding: 10px 12px;
+    border: 1px solid rgba(201,149,104,.2);
+    background: rgba(201,149,104,.035);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    color: rgba(245,230,200,.58);
+    font-size: 9px;
+  }
+
+  .salora-ledger-error button {
+    border: 0;
+    background: transparent;
+    color: #d4af37;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .salora-ledger-loading {
+    min-height: 86px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: rgba(245,230,200,.45);
+    font-size: 9px;
+  }
+
+  .salora-history-meta {
+    display: block;
+    margin-top: 5px;
+    color: rgba(245,230,200,.27) !important;
+    font-size: 8px !important;
+    letter-spacing: .01em !important;
+    line-height: 1.45;
+  }
+
+  .salora-ledger-source {
+    margin-top: 13px;
+    padding-top: 11px;
+    border-top: 1px solid rgba(255,255,255,.05);
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: rgba(245,230,200,.28);
+    font-size: 8px;
+    line-height: 1.5;
+  }
+
+  .salora-ledger-source svg {
+    color: rgba(212,175,55,.72);
+    flex: 0 0 auto;
+  }
+
+  .spin {
+    animation: saloraSpin .9s linear infinite;
+  }
+
+  @keyframes saloraSpin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
 `;

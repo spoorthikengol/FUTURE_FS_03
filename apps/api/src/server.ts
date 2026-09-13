@@ -198,6 +198,9 @@ const acceptanceSchema = z.object({
 
   decisionState:
     decisionState.optional(),
+
+  simulationId:
+    uuid.optional(),
 });
 
 const appointmentQuerySchema =
@@ -1695,73 +1698,172 @@ app.post(
      * decision itself. A temporary analytics/history failure
      * must not prevent reception staff from receiving a result.
      */
+    let simulationId: string | null = null;
+
     try {
-      await pool.query(
-        `
-          INSERT INTO decision_simulations (
-            salon_id,
-            requested_at,
-            engine_version,
-            input,
-            result
-          )
-          VALUES (
-            $1,
-            $2,
-            $3,
-            $4,
-            $5
-          )
-        `,
-        [
-          authenticated.salonId,
+      const client = await pool.connect();
 
-          requestedAt,
+      try {
+        await client.query('BEGIN');
 
-          ENGINE_VERSION,
+        const simulationInsert =
+          await client.query<{ id: string }>(
+            `
+              INSERT INTO decision_simulations (
+                salon_id,
+                requested_at,
+                engine_version,
+                input,
+                result
+              )
+              VALUES (
+                $1,
+                $2,
+                $3,
+                $4,
+                $5
+              )
+              RETURNING id
+            `,
+            [
+              authenticated.salonId,
+              requestedAt,
+              ENGINE_VERSION,
+              safeJson({
+                serviceId: service.id,
+                serviceName: service.name,
+                customerName: body.customerName || null,
+                customerPhone: body.customerPhone || null,
+                requestedAt: requestedAt.toISOString(),
+              }),
+              safeJson({
+                recommendation,
+                candidates: candidates.slice(0, 8),
+              }),
+            ],
+          );
 
-          safeJson({
-            serviceId:
-              service.id,
+        simulationId =
+          simulationInsert.rows[0]?.id ?? null;
 
-            serviceName:
-              service.name,
+        if (!simulationId) {
+          throw new Error(
+            'Simulation was created without an id.',
+          );
+        }
 
-            customerName:
-              body.customerName ||
-              null,
+        const ledgerRecommendation = recommendation
+          ? {
+              state: recommendation.state,
+              stylistId: recommendation.stylistId,
+              start: recommendation.start,
+              end: recommendation.end,
+              revenue: Number(recommendation.revenue ?? 0),
+              totalDelay: Number(recommendation.totalDelay ?? 0),
+              maxDelay: Number(recommendation.maxDelay ?? 0),
+              wait: Number(recommendation.wait ?? 0),
+              affected: Number(recommendation.affected ?? 0),
+              reason: recommendation.reason ?? '',
+            }
+          : null;
 
-            customerPhone:
-              body.customerPhone ||
-              null,
+        const ledgerInsert = await client.query<{ id: string }>(
+          `
+            INSERT INTO decision_outcomes (
+              salon_id,
+              simulation_id,
+              actor_id,
+              service_id,
+              recommendation_state,
+              recommended_stylist_id,
+              recommended_start,
+              recommended_end,
+              expected_revenue_inr,
+              expected_total_delay_min,
+              expected_max_delay_min,
+              expected_wait_min,
+              expected_affected_appointments,
+              recommendation_reason
+            )
+            VALUES (
+              $1, $2, $3, $4, $5, $6, $7, $8, $9,
+              $10, $11, $12, $13, $14
+            )
+            RETURNING id
+          `,
+          [
+            authenticated.salonId,
+            simulationId,
+            authenticated.id,
+            service.id,
+            ledgerRecommendation?.state ?? 'RESCHEDULE',
+            ledgerRecommendation?.stylistId ?? null,
+            ledgerRecommendation?.start ?? null,
+            ledgerRecommendation?.end ?? null,
+            ledgerRecommendation?.revenue ?? 0,
+            ledgerRecommendation?.totalDelay ?? 0,
+            ledgerRecommendation?.maxDelay ?? 0,
+            ledgerRecommendation?.wait ?? 0,
+            ledgerRecommendation?.affected ?? 0,
+            ledgerRecommendation?.reason ||
+              'No feasible recommendation was available.',
+          ],
+        );
 
-            requestedAt:
-              requestedAt.toISOString(),
-          }),
+        const ledgerId = ledgerInsert.rows[0]?.id;
 
-          safeJson({
-            recommendation,
+        if (!ledgerId) {
+          throw new Error(
+            'Decision outcome was created without an id.',
+          );
+        }
 
-            candidates:
-              candidates.slice(
-                0,
-                8,
-              ),
-          }),
-        ],
-      );
+        await client.query(
+          `
+            INSERT INTO decision_outcome_events (
+              decision_outcome_id,
+              salon_id,
+              actor_id,
+              event_type,
+              metadata
+            )
+            VALUES ($1, $2, $3, $4, $5::jsonb)
+          `,
+          [
+            ledgerId,
+            authenticated.salonId,
+            authenticated.id,
+            'DECISION_RECORDED',
+            safeJson({
+              simulationId,
+              recommendationState:
+                ledgerRecommendation?.state ??
+                'RESCHEDULE',
+            }),
+          ],
+        );
+
+        await client.query('COMMIT');
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
     } catch (error) {
+      simulationId = null;
       req.log.warn(
         {
           error,
-          salonId:
-            authenticated.salonId,
+          salonId: authenticated.salonId,
         },
-        'Decision simulation history persistence failed',
+        'Decision simulation ledger persistence failed',
       );
     }
 
     return {
+      simulationId,
+
       recommendation,
 
       candidates:
@@ -2047,6 +2149,16 @@ app.post(
           'ROLLBACK',
         );
 
+        req.log.warn(
+          {
+            salonId,
+            userId,
+            stylistId: body.stylistId,
+            serviceId: body.serviceId,
+          },
+          'Walk-in acceptance rejected: stylist no longer eligible',
+        );
+
         return fail(
           reply,
           409,
@@ -2119,6 +2231,16 @@ app.post(
       ) {
         await client.query(
           'ROLLBACK',
+        );
+
+        req.log.warn(
+          {
+            salonId,
+            userId,
+            stylistId: body.stylistId,
+            startAt: body.startAt,
+          },
+          'Walk-in acceptance rejected: selected placement is in the past',
         );
 
         return fail(
@@ -2310,6 +2432,16 @@ app.post(
           'ROLLBACK',
         );
 
+        req.log.warn(
+          {
+            salonId,
+            userId,
+            stylistId: body.stylistId,
+            conflictingAppointmentId: conflict.rows[0].id,
+          },
+          'Walk-in acceptance rejected: a conflicting appointment now exists',
+        );
+
         return fail(
           reply,
           409,
@@ -2387,6 +2519,16 @@ app.post(
           'ROLLBACK',
         );
 
+        req.log.warn(
+          {
+            salonId,
+            userId,
+            stylistId: body.stylistId,
+            startAt: body.startAt,
+          },
+          'Walk-in acceptance rejected: selected candidate is no longer feasible against fresh state',
+        );
+
         return fail(
           reply,
           409,
@@ -2409,6 +2551,18 @@ app.post(
           'ROLLBACK',
         );
 
+        req.log.warn(
+          {
+            salonId,
+            userId,
+            stylistId: body.stylistId,
+            startAt: body.startAt,
+            clientDecisionState: body.decisionState,
+            freshDecisionState: actualDecisionState,
+          },
+          'Walk-in acceptance rejected: decision state changed since simulation',
+        );
+
         return fail(
           reply,
           409,
@@ -2422,6 +2576,16 @@ app.post(
       ) {
         await client.query(
           'ROLLBACK',
+        );
+
+        req.log.warn(
+          {
+            salonId,
+            userId,
+            stylistId: body.stylistId,
+            startAt: body.startAt,
+          },
+          'Walk-in acceptance rejected: fresh revalidation now recommends RESCHEDULE',
         );
 
         return fail(
@@ -2448,6 +2612,17 @@ app.post(
         ) {
           await client.query(
             'ROLLBACK',
+          );
+
+          req.log.warn(
+            {
+              salonId,
+              userId,
+              stylistId: body.stylistId,
+              startAt: body.startAt,
+              waitMinutes: wait,
+            },
+            'Walk-in acceptance rejected: WAIT placement outside allowed window',
           );
 
           return fail(
@@ -2492,6 +2667,18 @@ app.post(
         ) {
           await client.query(
             'ROLLBACK',
+          );
+
+          req.log.warn(
+            {
+              salonId,
+              userId,
+              stylistId: body.stylistId,
+              startAt: body.startAt,
+              previousAppointmentId: previous.id,
+              bufferMinutes: service.buffer_min,
+            },
+            'Walk-in acceptance rejected: placement violates required service buffer',
           );
 
           return fail(
@@ -2582,6 +2769,18 @@ app.post(
           'ROLLBACK',
         );
 
+        req.log.warn(
+          {
+            salonId,
+            userId,
+            stylistId: body.stylistId,
+            startAt: body.startAt,
+            maximumDelay,
+            affectedAppointments,
+          },
+          'Walk-in acceptance rejected: fresh cascade exceeds max downstream delay',
+        );
+
         return fail(
           reply,
           409,
@@ -2611,6 +2810,22 @@ app.post(
       ) {
         await client.query(
           'ROLLBACK',
+        );
+
+        req.log.warn(
+          {
+            salonId,
+            userId,
+            stylistId: body.stylistId,
+            startAt: body.startAt,
+            engineTotalDelay: selected.totalDelay,
+            manualTotalDelay: totalDelay,
+            engineMaxDelay: selected.maxDelay,
+            manualMaxDelay: maximumDelay,
+            engineAffected: selected.affected,
+            manualAffected: affectedAppointments,
+          },
+          'Walk-in acceptance rejected: engine result and manual cascade re-check disagree',
         );
 
         return fail(
@@ -2716,11 +2931,165 @@ app.post(
           .rows[0];
 
       /* -------------------------------------------------------------------- */
+      /* Decision Outcome Ledger                                               */
+      /* -------------------------------------------------------------------- */
+
+      let ledgerId: string | null = null;
+
+      if (body.simulationId) {
+        const ledgerResult =
+          await client.query<{
+            id: string;
+            recommendation_state: string;
+            staff_action: string;
+          }>(
+            `
+              SELECT
+                id,
+                recommendation_state,
+                staff_action
+              FROM decision_outcomes
+              WHERE
+                salon_id = $1
+                AND simulation_id = $2
+              FOR UPDATE
+            `,
+            [
+              salonId,
+              body.simulationId,
+            ],
+          );
+
+        const ledger = ledgerResult.rows[0];
+
+        if (!ledger) {
+          await client.query('ROLLBACK');
+          req.log.warn(
+            {
+              salonId,
+              userId,
+              simulationId: body.simulationId,
+            },
+            'Walk-in acceptance rejected: decision history not found',
+          );
+          return fail(
+            reply,
+            409,
+            'Decision history was not found. Simulate again before accepting.',
+          );
+        }
+
+        /*
+         * Stale-decision protection (Phase F):
+         *
+         * The Idempotency-Key check earlier in this handler only
+         * catches a *repeat* of the exact same accept request. It
+         * does not catch a second, materially different accept
+         * request (a different Idempotency-Key) racing to act on
+         * the same decision_outcomes row — for example a double
+         * click that generated two keys, or two staff members
+         * accepting the same walk-in concurrently.
+         *
+         * decision_outcomes.staff_action starts as 'NONE' and is
+         * set exactly once per decision (see the sibling
+         * /api/decision-outcomes/:id/action route, which already
+         * enforces this same invariant). Locking this row with
+         * FOR UPDATE above means only one concurrent transaction
+         * can observe staff_action === 'NONE'; the loser must be
+         * rejected here, before it creates a second real
+         * appointment against a decision that was already acted
+         * on.
+         */
+        if (ledger.staff_action !== 'NONE') {
+          await client.query('ROLLBACK');
+          req.log.warn(
+            {
+              salonId,
+              userId,
+              simulationId: body.simulationId,
+              ledgerId: ledger.id,
+              existingStaffAction: ledger.staff_action,
+            },
+            'Walk-in acceptance rejected: decision already actioned',
+          );
+          return fail(
+            reply,
+            409,
+            'This decision has already been acted on. Simulate again before accepting.',
+          );
+        }
+
+        ledgerId = ledger.id;
+
+        await client.query(
+          `
+            UPDATE decision_outcomes
+            SET
+              staff_action = 'ACCEPT',
+              outcome = 'ACCEPTED',
+              appointment_id = $3,
+              walk_in_id = $4,
+              actual_revenue_inr = $5,
+              schedule_changed = $6,
+              recommendation_followed = (
+                recommendation_state = $7
+              ),
+              acted_by = $8,
+              acted_at = now(),
+              outcome_at = now()
+            WHERE
+              salon_id = $1
+              AND id = $2
+              AND staff_action = 'NONE'
+          `,
+          [
+            salonId,
+            ledgerId,
+            appointment.id,
+            walkIn.id,
+            Number(service.price_inr),
+            totalDelay > 0,
+            actualDecisionState,
+            userId,
+          ],
+        );
+
+        await client.query(
+          `
+            INSERT INTO decision_outcome_events (
+              decision_outcome_id,
+              salon_id,
+              actor_id,
+              event_type,
+              metadata
+            )
+            VALUES ($1, $2, $3, $4, $5::jsonb)
+          `,
+          [
+            ledgerId,
+            salonId,
+            userId,
+            'STAFF_ACCEPTED',
+            safeJson({
+              appointmentId: appointment.id,
+              walkInId: walkIn.id,
+              recommendationState: actualDecisionState,
+              totalDelay,
+              maximumDelay,
+              affectedAppointments,
+            }),
+          ],
+        );
+      }
+
+      /* -------------------------------------------------------------------- */
       /* Response                                                              */
       /* -------------------------------------------------------------------- */
 
       const response = {
         ok: true,
+
+        ledgerId,
 
         appointmentId:
           appointment.id,
@@ -2932,6 +3301,377 @@ app.post(
         );
       }
 
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+);
+
+/* -------------------------------------------------------------------------- */
+/* Decision Outcome Ledger                                                    */
+/* -------------------------------------------------------------------------- */
+
+const decisionOutcomeIdSchema = z.object({
+  id: uuid,
+});
+
+const decisionOutcomeActionSchema = z.object({
+  staffAction: z.enum([
+    'ACCEPT',
+    'REJECT',
+    'WAIT',
+    'RESCHEDULE',
+    'EXPIRE',
+    'CANCEL',
+  ]),
+
+  outcome: z.enum([
+    'ACCEPTED',
+    'REJECTED',
+    'WAITED',
+    'RESCHEDULED',
+    'EXPIRED',
+    'ABANDONED',
+    'CANCELLED',
+    'COMPLETED',
+  ]),
+
+  appointmentId: uuid.optional(),
+  actualRevenueInr: z.number().int().nonnegative().optional(),
+  scheduleChanged: z.boolean().default(false),
+  recommendationFollowed: z.boolean().optional(),
+});
+
+app.get(
+  '/api/decision-outcomes',
+  {
+    preHandler: user,
+  },
+  async (req, reply) => {
+    const authenticated =
+      getAuthenticatedUser(req);
+
+    if (!authenticated?.salonId) {
+      return fail(
+        reply,
+        401,
+        'Authentication required.',
+      );
+    }
+
+    const result = await pool.query(
+      `
+        SELECT
+          d.id,
+          d.simulation_id AS "simulationId",
+          d.recommendation_state AS "recommendationState",
+          d.staff_action AS "staffAction",
+          d.outcome,
+          d.expected_revenue_inr AS "expectedRevenueInr",
+          d.actual_revenue_inr AS "actualRevenueInr",
+          d.recommended_start AS "recommendedStart",
+          d.recommended_end AS "recommendedEnd",
+          d.acted_at AS "actedAt",
+          d.outcome_at AS "outcomeAt",
+          d.created_at AS "createdAt",
+          COALESCE(
+            ds.input->>'customerName',
+            ds.input->>'customer_name',
+            'Walk-in customer'
+          ) AS "customerName",
+          s.name AS service,
+          st.name AS stylist
+        FROM decision_outcomes d
+        INNER JOIN services s ON s.id = d.service_id
+        LEFT JOIN stylists st ON st.id = d.recommended_stylist_id
+        LEFT JOIN decision_simulations ds ON ds.id = d.simulation_id
+        WHERE d.salon_id = $1
+        ORDER BY d.created_at DESC
+        LIMIT 100
+      `,
+      [authenticated.salonId],
+    );
+
+    return result.rows;
+  },
+);
+
+app.get(
+  '/api/decision-outcomes/:id',
+  {
+    preHandler: user,
+  },
+  async (req, reply) => {
+    const authenticated =
+      getAuthenticatedUser(req);
+
+    if (!authenticated?.salonId) {
+      return fail(
+        reply,
+        401,
+        'Authentication required.',
+      );
+    }
+
+    const params =
+      decisionOutcomeIdSchema.parse(
+        req.params,
+      );
+
+    const outcomeResult = await pool.query(
+      `
+        SELECT
+          d.*,
+          s.name AS service,
+          st.name AS stylist
+        FROM decision_outcomes d
+        INNER JOIN services s ON s.id = d.service_id
+        LEFT JOIN stylists st ON st.id = d.recommended_stylist_id
+        WHERE d.salon_id = $1
+          AND d.id = $2
+        LIMIT 1
+      `,
+      [authenticated.salonId, params.id],
+    );
+
+    const outcome = outcomeResult.rows[0];
+
+    if (!outcome) {
+      return fail(
+        reply,
+        404,
+        'Decision outcome not found.',
+      );
+    }
+
+    const eventsResult = await pool.query(
+      `
+        SELECT
+          id,
+          actor_id AS "actorId",
+          event_type AS "eventType",
+          metadata,
+          created_at AS "createdAt"
+        FROM decision_outcome_events
+        WHERE salon_id = $1
+          AND decision_outcome_id = $2
+        ORDER BY created_at ASC, id ASC
+      `,
+      [authenticated.salonId, params.id],
+    );
+
+    return {
+      ...outcome,
+      events: eventsResult.rows,
+    };
+  },
+);
+
+app.post(
+  '/api/decision-outcomes/:id/action',
+  {
+    preHandler: user,
+  },
+  async (req, reply) => {
+    const authenticated =
+      getAuthenticatedUser(req);
+
+    if (!authenticated?.salonId || !authenticated.id) {
+      return fail(
+        reply,
+        401,
+        'Authentication required.',
+      );
+    }
+
+    const params =
+      decisionOutcomeIdSchema.parse(
+        req.params,
+      );
+
+    const body =
+      decisionOutcomeActionSchema.parse(
+        req.body,
+      );
+
+    if (
+      body.outcome === 'COMPLETED'
+    ) {
+      return fail(
+        reply,
+        400,
+        'COMPLETED is not a staff action outcome in this ledger transition.',
+      );
+    }
+
+    const compatibleOutcomes: Record<string, string[]> = {
+      ACCEPT: ['ACCEPTED'],
+      REJECT: ['REJECTED'],
+      RESCHEDULE: ['RESCHEDULED'],
+      WAIT: ['WAITED'],
+      EXPIRE: ['EXPIRED', 'ABANDONED'],
+      CANCEL: ['CANCELLED'],
+    };
+
+    if (
+      !compatibleOutcomes[body.staffAction]?.includes(
+        body.outcome,
+      )
+    ) {
+      return fail(
+        reply,
+        400,
+        `Outcome ${body.outcome} is not compatible with action ${body.staffAction}.`,
+      );
+    }
+
+    const client = await pool.connect();
+
+    try {
+      await client.query('BEGIN');
+
+      const ledgerResult =
+        await client.query(
+          `
+            SELECT
+              id,
+              staff_action AS "staffAction",
+              outcome
+            FROM decision_outcomes
+            WHERE
+              salon_id = $1
+              AND id = $2
+            FOR UPDATE
+          `,
+          [
+            authenticated.salonId,
+            params.id,
+          ],
+        );
+
+      const ledger =
+        ledgerResult.rows[0];
+
+      if (!ledger) {
+        await client.query('ROLLBACK');
+        return fail(
+          reply,
+          404,
+          'Decision outcome not found.',
+        );
+      }
+
+      if (
+        ledger.staffAction !== 'NONE'
+      ) {
+        await client.query('ROLLBACK');
+        return fail(
+          reply,
+          409,
+          'This decision outcome has already been acted on.',
+        );
+      }
+
+      if (body.appointmentId) {
+        const appointment =
+          await client.query(
+            `
+              SELECT id
+              FROM appointments
+              WHERE
+                salon_id = $1
+                AND id = $2
+              LIMIT 1
+            `,
+            [
+              authenticated.salonId,
+              body.appointmentId,
+            ],
+          );
+
+        if (!appointment.rows[0]) {
+          await client.query('ROLLBACK');
+          return fail(
+            reply,
+            400,
+            'Appointment does not belong to this salon.',
+          );
+        }
+      }
+
+      await client.query(
+        `
+          UPDATE decision_outcomes
+          SET
+            staff_action = $3,
+            outcome = $4,
+            appointment_id = COALESCE($5, appointment_id),
+            actual_revenue_inr = COALESCE($6, actual_revenue_inr),
+            schedule_changed = $7,
+            recommendation_followed = COALESCE(
+              $8,
+              recommendation_followed
+            ),
+            acted_by = $9,
+            acted_at = now(),
+            outcome_at = now()
+          WHERE
+            salon_id = $1
+            AND id = $2
+        `,
+        [
+          authenticated.salonId,
+          params.id,
+          body.staffAction,
+          body.outcome,
+          body.appointmentId ?? null,
+          body.actualRevenueInr ?? null,
+          body.scheduleChanged,
+          body.recommendationFollowed ?? null,
+          authenticated.id,
+        ],
+      );
+
+      await client.query(
+        `
+          INSERT INTO decision_outcome_events (
+            decision_outcome_id,
+            salon_id,
+            actor_id,
+            event_type,
+            metadata
+          )
+          VALUES ($1, $2, $3, $4, $5::jsonb)
+        `,
+        [
+          params.id,
+          authenticated.salonId,
+          authenticated.id,
+          'STAFF_ACTION_RECORDED',
+          safeJson({
+            staffAction: body.staffAction,
+            outcome: body.outcome,
+            appointmentId: body.appointmentId ?? null,
+            actualRevenueInr:
+              body.actualRevenueInr ?? null,
+            scheduleChanged: body.scheduleChanged,
+            recommendationFollowed:
+              body.recommendationFollowed ?? null,
+          }),
+        ],
+      );
+
+      await client.query('COMMIT');
+
+      return {
+        ok: true,
+        ledgerId: params.id,
+        staffAction: body.staffAction,
+        outcome: body.outcome,
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
       throw error;
     } finally {
       client.release();

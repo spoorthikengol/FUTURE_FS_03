@@ -1,1 +1,32 @@
-{"name":"@salora/api","private":true,"type":"module","scripts":{"dev":"tsx watch src/server.ts","build":"tsc -p tsconfig.json","start":"node dist/server.js","test":"vitest run","db:migrate":"tsx src/db.ts migrate","db:seed":"tsx src/db.ts seed"},"dependencies":{"@fastify/cookie":"^10.0.1","@fastify/cors":"^10.0.2","@fastify/helmet":"^13.0.1","@fastify/rate-limit":"^10.2.1","argon2":"^0.41.1","dotenv":"^16.4.7","fastify":"^5.2.1","pg":"^8.13.1","zod":"^3.24.1"},"devDependencies":{"@types/node":"^22.10.5","@types/pg":"^8.11.10","tsx":"^4.19.2","typescript":"^5.7.2","vitest":"^2.1.8"}}
+{
+  "name": "@salora/api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "test": "vitest run",
+    "db:migrate": "tsx src/db.ts migrate",
+    "db:seed": "tsx src/db.ts seed",
+    "db:migrate:ledger": "tsx src/db.ts migrate:ledger"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^10.0.1",
+    "@fastify/cors": "^10.0.2",
+    "@fastify/helmet": "^13.0.1",
+    "@fastify/rate-limit": "^10.2.1",
+    "argon2": "^0.41.1",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.2.1",
+    "pg": "^8.13.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
